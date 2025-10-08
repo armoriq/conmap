@@ -67,3 +67,11 @@ tags are no longer required.
 
 Ensure the repository secret `PYPI_API_TOKEN` is set to a valid PyPI API token so the workflow can
 upload new versions.
+
+When running `semantic-release` locally, export both tokens first:
+
+```bash
+export GH_TOKEN=<github-personal-access-token>
+export PYPI_TOKEN=<pypi-api-token>
+uv run semantic-release publish
+```
