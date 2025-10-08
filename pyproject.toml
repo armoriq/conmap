@@ -49,6 +49,8 @@ dev = [
   "ruff>=0.3",
   "coverage[toml]>=7.4",
   "pre-commit>=3.7",
+  "python-semantic-release>=9.8",
+  "build>=1.2",
 ]
 
 [tool.setuptools.packages.find]
@@ -81,3 +83,14 @@ output = "coverage.xml"
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
+
+[tool.semantic_release]
+version_source = "tag"
+branch = "main"
+commit_parser = "angular"
+changelog_file = "CHANGELOG.md"
+upload_to_release = true
+upload_to_pypi = true
+
+[tool.semantic_release.build]
+commands = ["python -m build"]

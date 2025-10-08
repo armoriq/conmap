@@ -1,13 +1,18 @@
-name: Publish
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
-  build-and-publish:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,11 +26,5 @@ jobs:
         run: uv run pre-commit run --all-files --show-diff-on-failure
       - name: Test
         run: uv run pytest --cov=conmap --cov-report=term-missing
-      - name: Install build tooling
-        run: uv pip install build twine
-      - name: Build package
-        run: uv run python -m build
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.8.14
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Semantic release
+        run: uv run semantic-release publish

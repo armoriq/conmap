@@ -60,4 +60,10 @@ Conmap derives its version automatically from Git tags via `setuptools_scm`. Tag
 
 ## Publishing
 
-GitHub Actions are provided for continuous integration and publishing to PyPI on tagged releases.
+Releases are automated with [python-semantic-release](https://python-semantic-release.readthedocs.io/). Use
+conventional commit messages (Angular style) and merge to `main`; the `Release` workflow bumps the
+semantic version, updates `CHANGELOG.md`, publishes to PyPI, and creates the GitHub release. Manual
+tags are no longer required.
+
+Ensure the repository secret `PYPI_API_TOKEN` is set to a valid PyPI API token so the workflow can
+upload new versions.
