@@ -2,7 +2,14 @@ from fastapi.testclient import TestClient
 
 import conmap.api as api
 from conmap.api import app
-from conmap.models import McpEndpoint, McpEvidence, ScanMetadata, ScanResult, Severity, Vulnerability
+from conmap.models import (
+    McpEndpoint,
+    McpEvidence,
+    ScanMetadata,
+    ScanResult,
+    Severity,
+    Vulnerability,
+)
 
 
 def build_result() -> ScanResult:
@@ -14,7 +21,9 @@ def build_result() -> ScanResult:
         probes=[],
         evidence=McpEvidence(),
     )
-    metadata = ScanMetadata(scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.5)
+    metadata = ScanMetadata(
+        scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.5
+    )
     vuln = Vulnerability(
         endpoint=endpoint.base_url,
         component="tool",

@@ -50,7 +50,9 @@ def test_llm_analyzer_invalid_response(monkeypatch):
         def __init__(self, api_key):
             self.responses = DummyResponses()
 
-    monkeypatch.setattr("conmap.vulnerabilities.llm_analyzer.OpenAI", lambda api_key: DummyClient(api_key))
+    monkeypatch.setattr(
+        "conmap.vulnerabilities.llm_analyzer.OpenAI", lambda api_key: DummyClient(api_key)
+    )
     findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True)
     assert findings == []
 

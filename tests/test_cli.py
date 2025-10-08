@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from typer.testing import CliRunner
 
 from conmap import cli
@@ -14,7 +12,9 @@ def fake_result() -> ScanResult:
         base_url="http://10.0.0.9",
         probes=[],
     )
-    metadata = ScanMetadata(scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.1)
+    metadata = ScanMetadata(
+        scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.1
+    )
     vuln = Vulnerability(
         endpoint=endpoint.base_url,
         component="tool",

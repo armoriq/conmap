@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import async_timeout
 import httpx

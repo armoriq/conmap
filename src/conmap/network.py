@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 import netifaces
 
@@ -34,9 +34,7 @@ def discover_networks(config: ScanConfig) -> List[ipaddress.IPv4Network]:
     return list(unique.values())
 
 
-def iter_target_hosts(
-    network: ipaddress.IPv4Network, include_self: bool = False
-) -> Iterable[str]:
+def iter_target_hosts(network: ipaddress.IPv4Network, include_self: bool = False) -> Iterable[str]:
     for host in network.hosts():
         if not include_self and str(host) == str(network.network_address):
             continue

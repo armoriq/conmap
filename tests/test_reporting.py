@@ -18,7 +18,9 @@ def sample_result() -> ScanResult:
         message="Example",
         evidence={},
     )
-    metadata = ScanMetadata(scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.1)
+    metadata = ScanMetadata(
+        scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.1
+    )
     return ScanResult(metadata=metadata, endpoints=[endpoint], vulnerabilities=[vulnerability])
 
 

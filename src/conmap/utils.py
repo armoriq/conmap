@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Iterable, Optional
 
 
 MCP_KEYWORDS = {"capabilities", "tools", "resources", "prompts", "model"}

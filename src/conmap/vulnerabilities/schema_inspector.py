@@ -19,29 +19,20 @@ def run_schema_inspector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
                 name = str(tool.get("name", "unknown"))
                 schema = _extract_schema(tool)
                 if schema:
-                    findings.extend(
-                        _inspect_schema(endpoint.base_url, f"tool:{name}", schema)
-                    )
+                    findings.extend(_inspect_schema(endpoint.base_url, f"tool:{name}", schema))
             resources = structure.get("resources") or []
             for resource in resources:
                 name = str(resource.get("name", "unknown"))
                 schema = _extract_schema(resource)
                 if schema:
-                    findings.extend(
-                        _inspect_schema(endpoint.base_url, f"resource:{name}", schema)
-                    )
+                    findings.extend(_inspect_schema(endpoint.base_url, f"resource:{name}", schema))
     return findings
 
 
 def _extract_schema(item: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(item, dict):
         return {}
-    return (
-        item.get("input_schema")
-        or item.get("schema")
-        or item.get("request_schema")
-        or {}
-    )
+    return item.get("input_schema") or item.get("schema") or item.get("request_schema") or {}
 
 
 def _inspect_schema(endpoint: str, component: str, schema: Dict[str, Any]) -> List[Vulnerability]:
@@ -68,7 +59,10 @@ def _inspect_schema(endpoint: str, component: str, schema: Dict[str, Any]) -> Li
                     component=component,
                     category="schema.overly_permissive_enum",
                     severity=Severity.medium,
-                    message=f"Enum allows {len(enum_values)} values, including potentially permissive entries.",
+                    message=(
+                        "Enum allows "
+                        f"{len(enum_values)} values, including potentially permissive entries."
+                    ),
                     evidence={"enum": enum_values},
                 )
             )

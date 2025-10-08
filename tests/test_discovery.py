@@ -77,8 +77,14 @@ async def test_discover_mcp_endpoints(monkeypatch):
     async def fake_scan(*args, **kwargs):
         return dummy_endpoint
 
-    monkeypatch.setattr(discovery, "discover_networks", lambda config: [__import__("ipaddress").ip_network("10.0.0.0/30")])
-    monkeypatch.setattr(discovery, "iter_target_hosts", lambda network, include_self=False: ["10.0.0.11"])
+    monkeypatch.setattr(
+        discovery,
+        "discover_networks",
+        lambda config: [__import__("ipaddress").ip_network("10.0.0.0/30")],
+    )
+    monkeypatch.setattr(
+        discovery, "iter_target_hosts", lambda network, include_self=False: ["10.0.0.11"]
+    )
     monkeypatch.setattr(discovery, "build_candidate_urls", lambda host, ports: ["http://10.0.0.11"])
     monkeypatch.setattr(discovery, "_scan_base_url", lambda **kwargs: fake_scan())
 
@@ -89,9 +95,16 @@ async def test_discover_mcp_endpoints(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_discover_mcp_endpoints_handles_none(monkeypatch):
-    monkeypatch.setattr(discovery, "discover_networks", lambda config: [__import__("ipaddress").ip_network("10.0.0.0/30")])
-    monkeypatch.setattr(discovery, "iter_target_hosts", lambda network, include_self=False: ["10.0.0.12"])
+    monkeypatch.setattr(
+        discovery,
+        "discover_networks",
+        lambda config: [__import__("ipaddress").ip_network("10.0.0.0/30")],
+    )
+    monkeypatch.setattr(
+        discovery, "iter_target_hosts", lambda network, include_self=False: ["10.0.0.12"]
+    )
     monkeypatch.setattr(discovery, "build_candidate_urls", lambda host, ports: ["http://10.0.0.12"])
+
     async def fake_scan(*args, **kwargs):
         return None
 

@@ -17,9 +17,13 @@ app = typer.Typer(help="Discover MCP endpoints on your network and audit them fo
 
 @app.command()
 def scan(
-    subnet: Optional[str] = typer.Option(None, help="CIDR subnet to scan instead of auto-discovery."),
+    subnet: Optional[str] = typer.Option(
+        None, help="CIDR subnet to scan instead of auto-discovery."
+    ),
     output: Optional[Path] = typer.Option(None, help="Write JSON report to this file."),
-    concurrency: Optional[int] = typer.Option(None, min=1, max=1024, help="Concurrent probe limit."),
+    concurrency: Optional[int] = typer.Option(
+        None, min=1, max=1024, help="Concurrent probe limit."
+    ),
     disable_llm: bool = typer.Option(False, help="Disable GPT-4o semantic analysis."),
     verify_tls: bool = typer.Option(False, help="Verify TLS certificates for HTTPS probes."),
 ) -> None:
@@ -54,7 +58,9 @@ def api(
     try:
         uvicorn = importlib.import_module("uvicorn")
     except ImportError as exc:  # pragma: no cover - runtime check
-        raise typer.BadParameter("uvicorn is required to run the API. Install with `pip install uvicorn`.") from exc
+        raise typer.BadParameter(
+            "uvicorn is required to run the API. Install with `pip install uvicorn`."
+        ) from exc
     uvicorn.run("conmap.api:app", host=host, port=port, log_level=log_level)
 
 

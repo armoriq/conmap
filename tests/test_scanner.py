@@ -1,7 +1,14 @@
 import pytest
 
 from conmap.config import ScanConfig
-from conmap.models import McpEndpoint, McpEvidence, ScanMetadata, ScanResult, Severity, Vulnerability
+from conmap.models import (
+    McpEndpoint,
+    McpEvidence,
+    ScanMetadata,
+    ScanResult,
+    Severity,
+    Vulnerability,
+)
 from conmap.scanner import scan, scan_async
 
 
@@ -15,7 +22,9 @@ async def test_scan_async_aggregates(monkeypatch):
         probes=[],
         evidence=McpEvidence(),
     )
-    metadata = ScanMetadata(scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.2)
+    metadata = ScanMetadata(
+        scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.2
+    )
 
     async def fake_discover(config):
         return [endpoint], metadata
@@ -52,7 +61,9 @@ async def test_scan_async_aggregates(monkeypatch):
 
 def test_scan_sync(monkeypatch):
     expected = ScanResult(
-        metadata=ScanMetadata(scanned_hosts=0, reachable_hosts=0, mcp_endpoints=0, duration_seconds=0),
+        metadata=ScanMetadata(
+            scanned_hosts=0, reachable_hosts=0, mcp_endpoints=0, duration_seconds=0
+        ),
         endpoints=[],
         vulnerabilities=[],
     )

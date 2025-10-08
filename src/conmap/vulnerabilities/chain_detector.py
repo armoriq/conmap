@@ -17,9 +17,15 @@ def run_chain_detector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
 
 
 def _build_capability_graph(endpoint: McpEndpoint) -> Dict[str, Set[str]]:
-    graph: Dict[str, Set[str]] = {"read_sensitive": set(), "network_tx": set(), "admin": set(),
-                                  "write_file": set(), "execute": set(), "config_read": set(),
-                                  "database": set()}
+    graph: Dict[str, Set[str]] = {
+        "read_sensitive": set(),
+        "network_tx": set(),
+        "admin": set(),
+        "write_file": set(),
+        "execute": set(),
+        "config_read": set(),
+        "database": set(),
+    }
     for structure in endpoint.evidence.json_structures:
         tools = structure.get("tools") or []
         if isinstance(tools, dict):
@@ -36,9 +42,14 @@ def _build_capability_graph(endpoint: McpEndpoint) -> Dict[str, Set[str]]:
 def _classify_tool(name: str, description: str) -> Set[str]:
     tags: Set[str] = set()
     text = f"{name} {description}"
-    if any(keyword in text for keyword in ["secret", "credential", "token", "password", "sensitive"]):
+    if any(
+        keyword in text for keyword in ["secret", "credential", "token", "password", "sensitive"]
+    ):
         tags.add("read_sensitive")
-    if any(keyword in text for keyword in ["download", "export", "exfiltrate", "send", "http", "upload", "webhook"]):
+    if any(
+        keyword in text
+        for keyword in ["download", "export", "exfiltrate", "send", "http", "upload", "webhook"]
+    ):
         tags.add("network_tx")
     if any(keyword in text for keyword in ["admin", "elevate", "privilege", "sudo"]):
         tags.add("admin")
