@@ -1,0 +1,63 @@
+# Conmap
+
+Conmap discovers Model Context Protocol (MCP) endpoints on the local network and evaluates them against the [safe-mcp](https://github.com/fkautz/safe-mcp) guidance. It ships with a feature-rich command line interface and an HTTP API suitable for enterprise automation pipelines.
+
+## Features
+
+- **Subnet discovery** – Detects local subnets automatically and probes HTTP/HTTPS endpoints for MCP support.
+- **MCP fingerprinting** – Validates headers, capability manifests, and well-known paths to confirm MCP compatibility.
+- **Vulnerability analysis** – Applies Schema Inspector, Chain Attack Detector, and LLM Analyzer heuristics inspired by the safe-mcp framework.
+- **OpenAI integration** – Uses GPT-4o for semantic reviews of tool descriptions with transparent caching.
+- **Automation-ready output** – Produces structured JSON reports grouped by endpoint, tool, resource, and prompt.
+- **Interfaces** – Provides both a Typer-based CLI and FastAPI server for flexible deployments.
+
+## Quick Start
+
+```bash
+pip install conmap
+conmap scan --output report.json
+```
+
+To run the web service:
+
+```bash
+conmap api --host 0.0.0.0 --port 8080
+```
+
+## Development
+
+### Using uv (recommended)
+
+```bash
+uv sync --extra dev
+uv run pre-commit install
+uv run pre-commit run --all-files --show-diff-on-failure
+uv run pytest --cov=conmap
+uv run conmap scan --output report.json
+```
+
+This will create an isolated `.venv` managed by [uv](https://github.com/astral-sh/uv) and install both runtime and development dependencies.
+
+### Using pip
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+pre-commit install
+pre-commit run --all-files --show-diff-on-failure
+pytest --cov=conmap
+```
+
+### Versioning
+
+Conmap derives its version automatically from Git tags via `setuptools_scm`. Tag commits in the format `vX.Y.Z` (for example `v0.2.0`) before publishing to ensure the package metadata reflects the expected release number.
+
+## Configuration
+
+- Set `OPENAI_API_KEY` for GPT-4o analysis.
+- Use `CONMAP_MAX_CONCURRENCY` and `CONMAP_TIMEOUT` (legacy `MCP_SCANNER_*`) to tune scanning behavior.
+
+## Publishing
+
+GitHub Actions are provided for continuous integration and publishing to PyPI on tagged releases.

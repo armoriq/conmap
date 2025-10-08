@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conmap"
+dynamic = ["version"]
+description = "Subnet MCP endpoint discovery and vulnerability analysis toolkit with CLI and API interfaces."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "Armoriq", email = "engineering@armoriq.com" }
+]
+keywords = ["mcp", "security", "scanner", "model-context-protocol", "network"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Security",
+  "Topic :: System :: Networking",
+]
+dependencies = [
+  "async-timeout>=4.0",
+  "cachetools>=5.3",
+  "fastapi>=0.110",
+  "httpx[http2]>=0.27",
+  "netifaces>=0.11",
+  "openai>=1.14",
+  "pydantic>=2.6",
+  "rich>=13.7",
+  "typer[all]>=0.9",
+  "uvicorn[standard]>=0.29",
+]
+
+[project.scripts]
+"conmap" = "conmap.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "pytest-asyncio>=0.23",
+  "respx>=0.21",
+  "ruff>=0.3",
+  "coverage[toml]>=7.4",
+  "pre-commit>=3.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+conmap = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["conmap"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 90
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"

@@ -1,0 +1,29 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v1
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+      - name: Test
+        run: uv run pytest --cov=conmap --cov-report=term-missing
+      - name: Install build tooling
+        run: uv pip install build twine
+      - name: Build package
+        run: uv run python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.8.14
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
