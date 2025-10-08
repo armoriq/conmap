@@ -87,7 +87,9 @@ fallback_version = "0.0.0"
 [tool.semantic_release]
 version_source = "tag"
 branch = "main"
-commit_parser = "angular"
+commit_parser = "conventional"
+initial_version = "0.1.0"
+tag_format = "v{version}"
 changelog_file = "CHANGELOG.md"
 upload_to_release = true
 upload_to_pypi = true
