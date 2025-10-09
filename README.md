@@ -54,9 +54,8 @@ pytest --cov=conmap
 
 ### Versioning
 
-Conmap still derives the packaged version from Git tags via `setuptools_scm`, but tags are now
-generated automatically by [autogitsemver](https://github.com/semver/auto-semver). The tool inspects
-commit history, decides the next semantic version, and emits a tag in `vX.Y.Z` form.
+Conmap derives its version from annotated Git tags via `setuptools_scm`. When you are ready to cut a
+release, create a tag such as `v0.2.0`; the version embedded in the build will match the tag.
 
 ## Configuration
 
@@ -67,21 +66,29 @@ commit history, decides the next semantic version, and emits a tag in `vX.Y.Z` f
 
 ## Publishing
 
-The `Release` GitHub Action runs on pushes to `main` (or via manual dispatch). It:
-
-1. Runs formatting/tests.
-2. Invokes `autogitsemver` to compute the next version and create/push the `vX.Y.Z` tag.
-3. Builds the distribution, uploads it to PyPI, and creates the GitHub release.
-
-Ensure the repository secret `PYPI_API_TOKEN` is populated so uploads succeed.
-
-To reproduce the process locally:
+Releases are driven by annotated tags. Create and push a tag in the form `vX.Y.Z` to trigger the
+`Release` workflow:
 
 ```bash
-export PYPI_TOKEN=<pypi-api-token>
-export GH_TOKEN=<github-personal-access-token>
-uv run autogitsemver
-git tag -a "v$(uv run autogitsemver | tail -n1)" -m "release"
+git tag -a v0.1.0 -m "release v0.1.0"
+git push origin v0.1.0
+```
+
+The workflow will:
+
+1. Install dependencies, lint, and run tests.
+2. Build the project with `setuptools_scm` pinned to the tag version.
+3. Upload artifacts to PyPI via `pypa/gh-action-pypi-publish` and create a GitHub release.
+
+Ensure the repository secret `PYPI_API_TOKEN` contains a valid PyPI API token before pushing tags.
+
+For a manual (local) release:
+
+```bash
+export VERSION=0.1.0
+git tag -a "v$VERSION" -m "release v$VERSION"
+git push origin "v$VERSION"
+export SETUPTOOLS_SCM_PRETEND_VERSION="$VERSION"
 uv run python -m build
 python -m pip install --upgrade twine
 python -m twine upload dist/*

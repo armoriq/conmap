@@ -2,12 +2,11 @@ name: Release
 
 on:
   push:
-    branches: ["main"]
-  workflow_dispatch:
+    tags:
+      - "v*"
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -27,46 +26,11 @@ jobs:
         run: uv run pre-commit run --all-files --show-diff-on-failure
       - name: Test
         run: uv run pytest --cov=conmap --cov-report=term-missing
-      - name: Determine next version
-        id: autogitsemver
-        run: |
-          run_semver() {
-            uv run autogitsemver "$@" 2>&1 | tee /tmp/autogitsemver.log
-          }
-          RAW=$(run_semver)
-          VERSION=$(echo "$RAW" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)
-          if [ -z "$VERSION" ]; then
-            echo "autogitsemver output:"
-            cat /tmp/autogitsemver.log
-            echo "Failed to determine version from autogitsemver output" >&2
-            exit 1
-          fi
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-            echo "Version v$VERSION already exists; bumping patch release."
-            RAW=$(run_semver --micro)
-            VERSION=$(echo "$RAW" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)
-            if [ -z "$VERSION" ]; then
-              echo "autogitsemver --micro output:"
-              cat /tmp/autogitsemver.log
-              echo "Failed to determine version from fallback autogitsemver run" >&2
-              exit 1
-            fi
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      - name: Create tag
-        run: |
-          VERSION=${{ steps.autogitsemver.outputs.version }}
-          TAG="v${VERSION}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists; skipping tagging."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-          fi
       - name: Build package
-        run: uv run python -m build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          export SETUPTOOLS_SCM_PRETEND_VERSION="$VERSION"
+          uv run python -m build
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -76,6 +40,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.autogitsemver.outputs.version }}
-          name: v${{ steps.autogitsemver.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           files: dist/*
