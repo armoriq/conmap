@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from ..models import McpEndpoint, Severity, Vulnerability
@@ -19,13 +20,27 @@ def run_schema_inspector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
                 name = str(tool.get("name", "unknown"))
                 schema = _extract_schema(tool)
                 if schema:
-                    findings.extend(_inspect_schema(endpoint.base_url, f"tool:{name}", schema))
+                    findings.extend(
+                        _inspect_schema(
+                            endpoint.base_url,
+                            f"tool:{name}",
+                            schema,
+                            tool_name=name,
+                        )
+                    )
             resources = structure.get("resources") or []
             for resource in resources:
                 name = str(resource.get("name", "unknown"))
                 schema = _extract_schema(resource)
                 if schema:
-                    findings.extend(_inspect_schema(endpoint.base_url, f"resource:{name}", schema))
+                    findings.extend(
+                        _inspect_schema(
+                            endpoint.base_url,
+                            f"resource:{name}",
+                            schema,
+                            tool_name=name,
+                        )
+                    )
     return findings
 
 
@@ -35,8 +50,26 @@ def _extract_schema(item: Dict[str, Any]) -> Dict[str, Any]:
     return item.get("input_schema") or item.get("schema") or item.get("request_schema") or {}
 
 
-def _inspect_schema(endpoint: str, component: str, schema: Dict[str, Any]) -> List[Vulnerability]:
+def _inspect_schema(
+    endpoint: str,
+    component: str,
+    schema: Dict[str, Any],
+    tool_name: str,
+) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
+    if not schema.get("type"):
+        findings.append(
+            Vulnerability(
+                endpoint=endpoint,
+                component=component,
+                category="schema.missing_type",
+                severity=Severity.high,
+                message="Schema missing root type definition.",
+                mitigation="Add an explicit `type` field to the schema root.",
+                detection_source="static",
+                evidence={"schema": schema},
+            )
+        )
     findings.extend(_check_schema_recursively(endpoint, component, schema, path="$"))
     if schema.get("type") == "object" and schema.get("properties"):
         if not schema.get("required"):
@@ -47,6 +80,8 @@ def _inspect_schema(endpoint: str, component: str, schema: Dict[str, Any]) -> Li
                     category="schema.missing_required_fields",
                     severity=Severity.medium,
                     message="Object schema defines properties but no required fields.",
+                    mitigation="Define required parameters to prevent permissive execution.",
+                    detection_source="static",
                     evidence={"schema": schema},
                 )
             )
@@ -63,9 +98,28 @@ def _inspect_schema(endpoint: str, component: str, schema: Dict[str, Any]) -> Li
                         "Enum allows "
                         f"{len(enum_values)} values, including potentially permissive entries."
                     ),
+                    mitigation="Reduce enum options or enforce stricter validation.",
+                    detection_source="static",
                     evidence={"enum": enum_values},
                 )
             )
+
+    sensitive_pattern = re.compile(
+        r"(delete|remove|drop|destroy|execute|exec|admin)", re.IGNORECASE
+    )
+    if sensitive_pattern.search(tool_name) and (not schema.get("required")):
+        findings.append(
+            Vulnerability(
+                endpoint=endpoint,
+                component=component,
+                category="schema.sensitive_operation_permissive",
+                severity=Severity.high,
+                message="Sensitive operation lacks required parameters.",
+                mitigation="Mark critical parameters as required and validate inputs strictly.",
+                detection_source="static",
+                evidence={"tool": tool_name, "schema": schema},
+            )
+        )
     return findings
 
 
@@ -87,6 +141,8 @@ def _check_schema_recursively(
                     category="schema.dangerous_default",
                     severity=Severity.high,
                     message=f"Default value '{default}' at {path} is potentially dangerous.",
+                    mitigation="Remove or harden default value; require explicit safe input.",
+                    detection_source="static",
                     evidence={"default": default, "path": path},
                 )
             )
@@ -98,6 +154,8 @@ def _check_schema_recursively(
                 category="schema.dangerous_default",
                 severity=Severity.high,
                 message=f"Default value '{default}' at {path} references sensitive location.",
+                mitigation="Do not point defaults to sensitive paths or credentials.",
+                detection_source="static",
                 evidence={"default": default, "path": path},
             )
         )
@@ -111,6 +169,8 @@ def _check_schema_recursively(
                     category="schema.unbounded_string",
                     severity=severity,
                     message=f"String field {path} lacks maxLength or pattern validation.",
+                    mitigation="Add maxLength and/or regex pattern constraints.",
+                    detection_source="static",
                     evidence={"schema": schema, "path": path},
                 )
             )
@@ -122,6 +182,8 @@ def _check_schema_recursively(
                     category="schema.sensitive_parameter_unvalidated",
                     severity=Severity.high,
                     message=f"Sensitive parameter {path} lacks strict validation.",
+                    mitigation="Whitelist allowable values or enforce strict regex validation.",
+                    detection_source="static",
                     evidence={"schema": schema, "path": path},
                 )
             )
@@ -146,6 +208,8 @@ def _check_schema_recursively(
                     category="schema.additional_properties",
                     severity=Severity.medium,
                     message=f"Schema {path} permits arbitrary additional properties.",
+                    mitigation="Set additionalProperties to false or define explicit schema.",
+                    detection_source="static",
                     evidence={"schema": schema, "path": path},
                 )
             )

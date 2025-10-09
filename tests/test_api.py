@@ -43,16 +43,25 @@ def test_health_endpoint():
 
 
 def test_scan_endpoint(monkeypatch):
+    seen = {}
+
     async def fake_scan(config):
+        seen["analysis_depth"] = config.analysis_depth
+        seen["enable_llm_analysis"] = config.enable_llm_analysis
         return build_result()
 
     monkeypatch.setattr(api, "scan_async", fake_scan)
     client = TestClient(app)
-    response = client.post("/scan", json={"subnet": "10.0.0.0/30"})
+    response = client.post(
+        "/scan",
+        json={"subnet": "10.0.0.0/30", "analysis_depth": "deep", "enable_ai": True},
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"]["mcp_endpoints"] == 1
     assert data["vulnerabilities"][0]["category"] == "schema.issue"
+    assert seen["analysis_depth"] == "deep"
+    assert seen["enable_llm_analysis"] is True
 
 
 def test_scan_endpoint_invalid_config(monkeypatch):

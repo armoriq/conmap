@@ -42,6 +42,20 @@ def test_cli_scan_prints_stdout(monkeypatch):
     assert "schema.test" in result.stdout
 
 
+def test_cli_scan_depth_option(monkeypatch):
+    runner = CliRunner()
+    captured = {}
+
+    async def fake_scan(config):
+        captured["depth"] = config.analysis_depth
+        return fake_result()
+
+    monkeypatch.setattr("conmap.cli.scan_async", fake_scan)
+    result = runner.invoke(cli.app, ["scan", "--depth", "deep"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["depth"] == "deep"
+
+
 def test_cli_api_invokes_uvicorn(monkeypatch):
     calls = {}
 

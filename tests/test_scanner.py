@@ -57,6 +57,9 @@ async def test_scan_async_aggregates(monkeypatch):
     assert isinstance(result, ScanResult)
     assert result.metadata.mcp_endpoints == 1
     assert result.vulnerabilities[0].category == "schema.test"
+    assert result.enhanced_vulnerabilities == result.vulnerabilities
+    assert result.chain_attacks_detected == 0
+    assert result.analysis_depth == "standard"
 
 
 def test_scan_sync(monkeypatch):
@@ -98,3 +101,38 @@ async def test_scan_async_uses_cache_path(monkeypatch):
     result = await scan_async(config)
     assert result.endpoints == []
     assert calls["path"] == "/tmp/cache.json"
+    assert result.analysis_depth == "standard"
+
+
+@pytest.mark.asyncio
+async def test_scan_async_basic_depth(monkeypatch):
+    config = ScanConfig(analysis_depth="basic", enable_llm_analysis=False)
+
+    markers = {"schema": 0, "chain": 0, "llm": 0}
+
+    async def fake_discover(conf):
+        return [], ScanMetadata()
+
+    def fake_schema(endpoints):
+        markers["schema"] += 1
+        return []
+
+    def fake_chain(endpoints):
+        markers["chain"] += 1
+        return []
+
+    def fake_llm(endpoints, cache, enabled):
+        markers["llm"] += 1
+        assert enabled is False
+        return []
+
+    monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
+    monkeypatch.setattr("conmap.scanner.run_schema_inspector", fake_schema)
+    monkeypatch.setattr("conmap.scanner.run_chain_detector", fake_chain)
+    monkeypatch.setattr("conmap.scanner.run_llm_analyzer", fake_llm)
+
+    result = await scan_async(config)
+    assert result.analysis_depth == "basic"
+    assert markers["schema"] == 0
+    assert markers["chain"] == 0
+    assert markers["llm"] == 1
