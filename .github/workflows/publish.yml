@@ -30,13 +30,27 @@ jobs:
       - name: Determine next version
         id: autogitsemver
         run: |
-          RAW=$(uv run autogitsemver 2>&1 | tee /tmp/autogitsemver.log)
+          run_semver() {
+            uv run autogitsemver "$@" 2>&1 | tee /tmp/autogitsemver.log
+          }
+          RAW=$(run_semver)
           VERSION=$(echo "$RAW" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)
           if [ -z "$VERSION" ]; then
             echo "autogitsemver output:"
             cat /tmp/autogitsemver.log
             echo "Failed to determine version from autogitsemver output" >&2
             exit 1
+          fi
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "Version v$VERSION already exists; bumping patch release."
+            RAW=$(run_semver --micro)
+            VERSION=$(echo "$RAW" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)
+            if [ -z "$VERSION" ]; then
+              echo "autogitsemver --micro output:"
+              cat /tmp/autogitsemver.log
+              echo "Failed to determine version from fallback autogitsemver run" >&2
+              exit 1
+            fi
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: Create tag
