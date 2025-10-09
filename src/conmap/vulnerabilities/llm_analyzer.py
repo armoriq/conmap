@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from openai import APIError, OpenAI
 
 from ..cache import Cache
-from ..models import McpEndpoint, Severity, Vulnerability
+from ..models import AIInsight, McpEndpoint, Severity, Vulnerability
 
 DEFAULT_MODEL = os.getenv("CONMAP_MODEL") or os.getenv("MCP_SCANNER_MODEL") or "gpt-4o"
 
@@ -58,15 +58,21 @@ def _batched_tools(endpoint: McpEndpoint, batch_size: int = 5) -> Iterable[List[
 
 
 PROMPT_TEMPLATE = """You are a security researcher focused on Model Context Protocol (MCP) tools.
-Analyze the provided MCP tool definitions and look for semantic vulnerabilities such as hidden
-prompt injections, unsafe instructions, or risky behaviors. Respond with a JSON array where each
-entry is:
+Analyze the provided MCP tool definitions and identify semantic vulnerabilities such as hidden
+prompt injections, unsafe defaults, or multi-step attack scenarios. Respond strictly with JSON
+structured as:
 {{
-  "component": "<tool-name>",
-  "severity": "<critical|high|medium|low>",
-  "message": "<short explanation>"
-}}.
-Only respond with JSON. If no findings are present, return an empty JSON array [].
+  "threats": [
+    {{
+      "tool": "<tool-name>",
+      "threat": "<short description>",
+      "confidence": <0-100>,
+      "rationale": "<why this is dangerous>",
+      "suggestedMitigation": "<fix recommendation>"
+    }}
+  ]
+}}
+Return {{"threats": []}} when nothing is found.
 """
 
 
@@ -105,24 +111,47 @@ def _vulns_from_response(endpoint: str, response_text: str) -> List[Vulnerabilit
     except json.JSONDecodeError:
         return []
     findings: List[Vulnerability] = []
-    if not isinstance(data, list):
+    threats: List[Dict[str, Any]]
+    if isinstance(data, dict):
+        threats = data.get("threats", []) or []
+    elif isinstance(data, list):
+        threats = data
+    else:
         return findings
-    for entry in data:
+
+    for entry in threats:
         if not isinstance(entry, dict):
             continue
-        severity_str = str(entry.get("severity", "low")).lower()
         try:
-            severity = Severity(severity_str)
-        except ValueError:
+            confidence = float(entry.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence = 0
+        if confidence >= 85:
+            severity = Severity.critical
+        elif confidence >= 60:
+            severity = Severity.high
+        elif confidence >= 40:
+            severity = Severity.medium
+        else:
             severity = Severity.low
+        insight = AIInsight(
+            threat=str(entry.get("threat", "")),
+            confidence=int(max(0, min(100, round(confidence)))),
+            rationale=str(entry.get("rationale", "")),
+            suggested_mitigation=entry.get("suggestedMitigation"),
+        )
         findings.append(
             Vulnerability(
                 endpoint=endpoint,
-                component=str(entry.get("component", "llm")),
+                component=str(entry.get("tool", "llm")),
                 category="llm.semantic_analysis",
                 severity=severity,
-                message=str(entry.get("message", "")),
-                evidence={"source": "openai"},
+                message=insight.threat,
+                mitigation=insight.suggested_mitigation,
+                detection_source="llm",
+                confidence=insight.confidence,
+                ai_insight=insight,
+                evidence={"source": "openai", "rationale": insight.rationale},
             )
         )
     return findings

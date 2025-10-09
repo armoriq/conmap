@@ -104,3 +104,20 @@ def test_schema_inspector_array_items():
     findings = run_schema_inspector([endpoint])
     categories = {finding.category for finding in findings}
     assert "schema.unbounded_string" in categories
+
+
+def test_schema_inspector_missing_type_and_sensitive_tool():
+    endpoint = build_endpoint(
+        {
+            "tools": [
+                {
+                    "name": "deleteUser",
+                    "input_schema": {"properties": {"userId": {"type": "string"}}},
+                }
+            ]
+        }
+    )
+    findings = run_schema_inspector([endpoint])
+    categories = {finding.category for finding in findings}
+    assert "schema.missing_type" in categories
+    assert "schema.sensitive_operation_permissive" in categories

@@ -15,10 +15,28 @@ async def scan_async(config: ScanConfig) -> ScanResult:
     endpoints, metadata = await discover_mcp_endpoints(config)
     cache = Cache(path=config.cache_path)
     findings = []
-    findings.extend(run_schema_inspector(endpoints))
-    findings.extend(run_chain_detector(endpoints))
-    findings.extend(run_llm_analyzer(endpoints, cache, enabled=config.enable_llm_analysis))
-    return ScanResult(metadata=metadata, endpoints=endpoints, vulnerabilities=findings)
+
+    depth = (config.analysis_depth or "standard").lower()
+    run_structural = depth in {"standard", "deep"}
+    enable_llm = config.enable_llm_analysis or depth == "deep"
+
+    if run_structural:
+        findings.extend(run_schema_inspector(endpoints))
+        findings.extend(run_chain_detector(endpoints))
+
+    findings.extend(run_llm_analyzer(endpoints, cache, enabled=enable_llm))
+
+    chain_count = sum(1 for finding in findings if finding.category.startswith("chain."))
+
+    return ScanResult(
+        metadata=metadata,
+        endpoints=endpoints,
+        vulnerabilities=findings,
+        enhanced_vulnerabilities=findings,
+        ai_analysis_enabled=enable_llm,
+        chain_attacks_detected=chain_count,
+        analysis_depth=depth,
+    )
 
 
 def scan(config: ScanConfig) -> ScanResult:

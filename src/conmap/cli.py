@@ -26,6 +26,13 @@ def scan(
     ),
     disable_llm: bool = typer.Option(False, help="Disable GPT-4o semantic analysis."),
     verify_tls: bool = typer.Option(False, help="Verify TLS certificates for HTTPS probes."),
+    depth: str = typer.Option(
+        "standard",
+        "--depth",
+        "-d",
+        help="Analysis depth: basic, standard, or deep.",
+        show_choices=True,
+    ),
 ) -> None:
     """Run a one-shot scan and output the JSON report."""
     config = ScanConfig.from_env()
@@ -36,6 +43,11 @@ def scan(
         updates["concurrency"] = concurrency
     updates["enable_llm_analysis"] = not disable_llm
     updates["verify_tls"] = verify_tls
+    if depth:
+        normalized_depth = depth.strip().lower()
+        if normalized_depth not in {"basic", "standard", "deep"}:
+            raise typer.BadParameter("Depth must be one of: basic, standard, deep.")
+        updates["analysis_depth"] = normalized_depth
     config = config.model_copy(update=updates)  # type: ignore[attr-defined]
 
     result = asyncio.run(scan_async(config))

@@ -23,6 +23,8 @@ def test_scan_config_env_overrides(monkeypatch):
     monkeypatch.setenv("CONMAP_VERIFY_TLS", "true")
     monkeypatch.setenv("CONMAP_INCLUDE_SELF", "1")
     monkeypatch.setenv("CONMAP_CACHE_PATH", "/tmp/conmap-cache.json")
+    monkeypatch.setenv("CONMAP_ANALYSIS_DEPTH", "deep")
+    monkeypatch.setenv("CONMAP_ENABLE_LLM_ANALYSIS", "0")
     config = ScanConfig.from_env()
     assert config.subnet == "10.0.0.0/30"
     assert config.ports == [8080, 8443]
@@ -31,6 +33,8 @@ def test_scan_config_env_overrides(monkeypatch):
     assert config.verify_tls is True
     assert config.include_self is True
     assert config.cache_path == "/tmp/conmap-cache.json"
+    assert config.analysis_depth == "deep"
+    assert config.enable_llm_analysis is False
 
 
 def test_scan_config_legacy_env(monkeypatch):

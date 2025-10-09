@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -31,6 +31,7 @@ class ScanConfig(BaseModel):
     include_self: bool = False
     enable_llm_analysis: bool = True
     cache_path: Optional[str] = None
+    analysis_depth: Literal["basic", "standard", "deep"] = "standard"
 
     @classmethod
     def from_env(cls) -> "ScanConfig":
@@ -60,9 +61,17 @@ class ScanConfig(BaseModel):
         include_self = _env("CONMAP_INCLUDE_SELF", "MCP_SCANNER_INCLUDE_SELF")
         if include_self:
             data["include_self"] = include_self.lower() in {"1", "true", "yes"}
+        enable_llm = _env("CONMAP_ENABLE_LLM_ANALYSIS", "MCP_SCANNER_ENABLE_LLM_ANALYSIS")
+        if enable_llm:
+            data["enable_llm_analysis"] = enable_llm.lower() in {"1", "true", "yes"}
         cache_path = _env("CONMAP_CACHE_PATH", "MCP_SCANNER_CACHE_PATH")
         if cache_path:
             data["cache_path"] = cache_path
+        depth = _env("CONMAP_ANALYSIS_DEPTH", "MCP_SCANNER_ANALYSIS_DEPTH")
+        if depth:
+            depth_normalized = depth.strip().lower()
+            if depth_normalized in {"basic", "standard", "deep"}:
+                data["analysis_depth"] = depth_normalized
         try:
             return cls(**data)
         except ValidationError as exc:  # pragma: no cover - defensive

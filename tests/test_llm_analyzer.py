@@ -1,3 +1,5 @@
+import importlib
+
 from conmap.cache import Cache
 from conmap.models import McpEndpoint, McpEvidence
 import conmap.vulnerabilities.llm_analyzer as llm_analyzer
@@ -57,17 +59,76 @@ def test_llm_analyzer_invalid_response(monkeypatch):
     assert findings == []
 
 
+def test_llm_analyzer_parses_dict_response(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "testkey")
+    endpoint = McpEndpoint(
+        address="10.0.0.8",
+        scheme="http",
+        port=80,
+        base_url="http://10.0.0.8",
+        probes=[],
+        evidence=McpEvidence(json_structures=[{"tools": [{"name": "demo"}]}]),
+    )
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            return type(
+                "Resp",
+                (),
+                {
+                    "output": [
+                        type(
+                            "Msg",
+                            (),
+                            {
+                                "type": "message",
+                                "message": type(
+                                    "Inner",
+                                    (),
+                                    {
+                                        "content": [
+                                            type(
+                                                "Part",
+                                                (),
+                                                {
+                                                    "type": "text",
+                                                    "text": (
+                                                        '{"threats": ['
+                                                        '{"tool": "demo", "threat": "issue", '
+                                                        '"confidence": 92, "rationale": "bad"}]}'
+                                                    ),
+                                                },
+                                            )
+                                        ]
+                                    },
+                                ),
+                            },
+                        )
+                    ]
+                },
+            )
+
+    class DummyClient:
+        def __init__(self, api_key):
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr(
+        "conmap.vulnerabilities.llm_analyzer.OpenAI", lambda api_key: DummyClient(api_key)
+    )
+    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True)
+    assert findings[0].ai_insight is not None
+    assert findings[0].ai_insight.confidence == 92
+
+
 def test_llm_analyzer_model_override(monkeypatch):
     monkeypatch.setenv("CONMAP_MODEL", "special-model")
-    from importlib import reload
-    import conmap.vulnerabilities.llm_analyzer as module
-
-    reload(module)
+    module = importlib.import_module("conmap.vulnerabilities.llm_analyzer")
+    importlib.reload(module)
     assert module.DEFAULT_MODEL == "special-model"
     global llm_analyzer
     llm_analyzer = module
     monkeypatch.delenv("CONMAP_MODEL", raising=False)
-    reload(module)
+    importlib.reload(module)
     llm_analyzer = module
 
 
@@ -92,7 +153,11 @@ def test_llm_analyzer_uses_cache(monkeypatch):
 
     class DummyContent:
         type = "text"
-        text = '[{"component": "demo", "severity": "high", "message": "Issue"}]'
+        text = (
+            '{"threats": ['
+            '{"tool": "demo", "threat": "Issue", "confidence": 88, '
+            '"rationale": "Because", "suggestedMitigation": "Fix"}]}'
+        )
 
     class DummyMessage:
         content = [DummyContent()]
@@ -125,5 +190,8 @@ def test_llm_analyzer_uses_cache(monkeypatch):
     # Subsequent call should hit cache and reuse findings
     findings_second = llm_analyzer.run_llm_analyzer([endpoint], cache, enabled=True)
     assert findings_first[0].component == "demo"
+    assert findings_first[0].detection_source == "llm"
+    assert findings_first[0].ai_insight is not None
+    assert findings_first[0].ai_insight.confidence == 88
     assert findings_second[0].message == "Issue"
     assert calls["count"] == 1

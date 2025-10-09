@@ -23,8 +23,10 @@ def test_chain_detector_flags_code_execution():
         }
     )
     findings = run_chain_detector([endpoint])
-    categories = [finding.category for finding in findings]
-    assert "chain.code_execution" in categories
+    assert any(f.category == "chain.code_execution" for f in findings)
+    for finding in findings:
+        assert finding.detection_source == "graph"
+        assert finding.chain_path
 
 
 def test_chain_detector_other_chains():
@@ -44,9 +46,36 @@ def test_chain_detector_other_chains():
     assert "chain.data_exfiltration" in categories
     assert "chain.privilege_escalation" in categories
     assert "chain.database_compromise" in categories
+    for finding in findings:
+        assert finding.detection_source == "graph"
+        assert finding.chain_path
+        assert finding.steps
 
 
 def test_chain_detector_no_findings():
     endpoint = build_endpoint({"tools": []})
     findings = run_chain_detector([endpoint])
     assert findings == []
+
+
+def test_chain_detector_detects_file_and_network():
+    endpoint = build_endpoint(
+        {
+            "tools": [
+                {
+                    "name": "config_reader",
+                    "description": "Fetch configuration and credentials from disk",
+                },
+                {
+                    "name": "net_sender",
+                    "description": "network webhook dispatcher",
+                },
+            ],
+            "resources": [
+                {"name": "db_resource", "description": "database query interface"},
+            ],
+        }
+    )
+    findings = run_chain_detector([endpoint])
+    names = {(f.category, tuple(f.chain_path)) for f in findings}
+    assert ("chain.data_exfiltration", ("config_reader", "net_sender")) in names

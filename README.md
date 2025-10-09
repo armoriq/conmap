@@ -8,6 +8,7 @@ Conmap discovers Model Context Protocol (MCP) endpoints on the local network and
 - **MCP fingerprinting** – Validates headers, capability manifests, and well-known paths to confirm MCP compatibility.
 - **Vulnerability analysis** – Applies Schema Inspector, Chain Attack Detector, and LLM Analyzer heuristics inspired by the safe-mcp framework.
 - **OpenAI integration** – Uses GPT-4o for semantic reviews of tool descriptions with transparent caching.
+- **Layered depth** – Choose basic, standard, or deep analysis (deep enables AI semantics and richer chain detection with privilege paths).
 - **Automation-ready output** – Produces structured JSON reports grouped by endpoint, tool, resource, and prompt.
 - **Interfaces** – Provides both a Typer-based CLI and FastAPI server for flexible deployments.
 
@@ -16,6 +17,8 @@ Conmap discovers Model Context Protocol (MCP) endpoints on the local network and
 ```bash
 pip install conmap
 conmap scan --output report.json
+# Run a deeper AI-assisted assessment
+conmap scan --depth deep --output deep-report.json
 ```
 
 To run the web service:
@@ -57,6 +60,8 @@ Conmap derives its version automatically from Git tags via `setuptools_scm`. Tag
 
 - Set `OPENAI_API_KEY` for GPT-4o analysis.
 - Use `CONMAP_MAX_CONCURRENCY` and `CONMAP_TIMEOUT` (legacy `MCP_SCANNER_*`) to tune scanning behavior.
+- Control automation flags with `CONMAP_ENABLE_LLM_ANALYSIS` and analysis depth with `CONMAP_ANALYSIS_DEPTH` (`basic`, `standard`, `deep`).
+- The HTTP API accepts `analysis_depth` (`basic|standard|deep`) and `enable_ai` fields in the body of `POST /scan`.
 
 ## Publishing
 

@@ -38,6 +38,13 @@ class McpEndpoint(BaseModel):
     evidence: McpEvidence = Field(default_factory=McpEvidence)
 
 
+class AIInsight(BaseModel):
+    threat: str
+    confidence: int = Field(ge=0, le=100)
+    rationale: str
+    suggested_mitigation: Optional[str] = None
+
+
 class Vulnerability(BaseModel):
     endpoint: str
     component: str
@@ -45,6 +52,14 @@ class Vulnerability(BaseModel):
     severity: Severity
     message: str
     evidence: Dict[str, Any] = Field(default_factory=dict)
+    mitigation: Optional[str] = None
+    detection_source: Optional[str] = None
+    confidence: Optional[float] = None
+    ai_insight: Optional[AIInsight] = None
+    chain_path: List[str] = Field(default_factory=list)
+    steps: List[str] = Field(default_factory=list)
+    required_privileges: List[str] = Field(default_factory=list)
+    count: Optional[int] = None
 
 
 class ScanMetadata(BaseModel):
@@ -58,6 +73,10 @@ class ScanResult(BaseModel):
     metadata: ScanMetadata
     endpoints: List[McpEndpoint]
     vulnerabilities: List[Vulnerability]
+    enhanced_vulnerabilities: List[Vulnerability] = Field(default_factory=list)
+    ai_analysis_enabled: bool = False
+    chain_attacks_detected: int = 0
+    analysis_depth: str = "standard"
 
 
 class ToolDescriptor(BaseModel):
