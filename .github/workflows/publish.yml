@@ -1,14 +1,13 @@
 name: Release
 
 on:
-  pull_request:
+  push:
     branches: ["main"]
-    types: ["closed"]
   workflow_dispatch:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,4 +29,4 @@ jobs:
       - name: Test
         run: uv run pytest --cov=conmap --cov-report=term-missing
       - name: Semantic release
-        run: uv run semantic-release publish
+        run: uv run semantic-release -v publish
