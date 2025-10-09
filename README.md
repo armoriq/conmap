@@ -1,5 +1,12 @@
 # Conmap
 
+[![CI](https://github.com/armoriq/conmap/actions/workflows/ci.yml/badge.svg)](https://github.com/armoriq/conmap/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/armoriq/conmap/actions/workflows/security.yml/badge.svg)](https://github.com/armoriq/conmap/actions/workflows/security.yml)
+[![SBOM](https://github.com/armoriq/conmap/actions/workflows/sbom.yml/badge.svg)](https://github.com/armoriq/conmap/actions/workflows/sbom.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%3E%3D90%25-brightgreen.svg)](#)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](#)
+
 Conmap discovers Model Context Protocol (MCP) endpoints on the local network and evaluates them against the [safe-mcp](https://github.com/fkautz/safe-mcp) guidance. It ships with a feature-rich command line interface and an HTTP API suitable for enterprise automation pipelines.
 
 ## Features
@@ -93,3 +100,14 @@ uv run python -m build
 python -m pip install --upgrade twine
 python -m twine upload dist/*
 ```
+
+## Trust Center
+
+- **Signed releases & provenance** – GitHub Actions builds run from annotated `v*` tags with immutable execution logs.
+- **Continuous assurance** – CI enforces linting, tests, and 90% line coverage before a build is published.
+- **Security automation** – Bandit and pip-audit workflows scan every push & pull request for code and dependency vulnerabilities.
+- **Supply chain transparency** – CycloneDX SBOMs are generated for each release and uploaded as artifacts.
+- **Responsible disclosure** – See [SECURITY.md](SECURITY.md) for vulnerability reporting guidelines and response timelines.
+- **Dependency hygiene** – Dependabot monitors both Python packages and GitHub Actions for outdated or vulnerable components.
+- **Operational support** – [SUPPORT.md](SUPPORT.md) documents response targets and contact processes for assistance.
+- **Community standards** – Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md).
