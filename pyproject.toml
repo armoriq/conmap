@@ -39,6 +39,7 @@ dependencies = [
 
 [project.scripts]
 "conmap" = "conmap.cli:main"
+"semantic-release" = "semantic_release.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -93,6 +94,8 @@ tag_format = "v{version}"
 changelog_file = "CHANGELOG.md"
 upload_to_release = true
 upload_to_pypi = true
+noop = true
+verbosity = "DEBUG"
 
 [tool.semantic_release.build]
 commands = ["python -m build"]
