@@ -49,8 +49,8 @@ dev = [
   "ruff>=0.3",
   "coverage[toml]>=7.4",
   "pre-commit>=3.7",
-  "python-semantic-release>=9.8",
   "build>=1.2",
+  "autogitsemver>=0.6",
 ]
 
 [tool.setuptools.packages.find]
@@ -83,18 +83,3 @@ output = "coverage.xml"
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
-
-[tool.semantic_release]
-version_source = "tag"
-branch = "main"
-commit_parser = "conventional"
-initial_version = "0.1.0"
-tag_format = "v{version}"
-changelog_file = "CHANGELOG.md"
-upload_to_release = true
-upload_to_pypi = true
-noop = true
-verbosity = "DEBUG"
-
-[tool.semantic_release.build]
-commands = ["python -m build"]

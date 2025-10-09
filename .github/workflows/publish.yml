@@ -14,7 +14,6 @@ jobs:
     env:
       PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,7 +27,41 @@ jobs:
         run: uv run pre-commit run --all-files --show-diff-on-failure
       - name: Test
         run: uv run pytest --cov=conmap --cov-report=term-missing
-      - name: Semantic release
-        run: uv run python -m semantic_release publish
-      - name: Semantic release
-        run: uv run semantic-release -v publish
+      - name: Determine next version
+        id: autogitsemver
+        run: |
+          RAW=$(uv run autogitsemver 2>&1 | tee /tmp/autogitsemver.log)
+          VERSION=$(echo "$RAW" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)
+          if [ -z "$VERSION" ]; then
+            echo "autogitsemver output:"
+            cat /tmp/autogitsemver.log
+            echo "Failed to determine version from autogitsemver output" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Create tag
+        run: |
+          VERSION=${{ steps.autogitsemver.outputs.version }}
+          TAG="v${VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; skipping tagging."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
+      - name: Build package
+        run: uv run python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+          verbose: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.autogitsemver.outputs.version }}
+          name: v${{ steps.autogitsemver.outputs.version }}
+          files: dist/*
