@@ -15,7 +15,7 @@ jobs:
   sast-and-deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -26,14 +26,11 @@ jobs:
           pip install bandit pip-audit
       - name: Bandit SAST
         run: |
-          bandit -r src -ll -iii -f json -o bandit.json
+          bandit -r src -ll -iii -f sarif -o bandit.sarif
       - name: Dependency audit
         run: |
-          pip-audit -f json -o pip-audit.json
-      - name: Upload results
-        uses: actions/upload-artifact@v4
+          pip-audit -f sarif -o pip-audit.sarif
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v4
         with:
-          name: security-reports
-          path: |
-            bandit.json
-            pip-audit.json
+          sarif_file: "*.sarif"
