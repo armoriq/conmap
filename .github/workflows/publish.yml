@@ -28,7 +28,5 @@ jobs:
         run: uv run pre-commit run --all-files --show-diff-on-failure
       - name: Test
         run: uv run pytest --cov=conmap --cov-report=term-missing
-      - name: Semantic release dry run
-        run: uv run semantic-release version --noop --verbosity=DEBUG
       - name: Semantic release
         run: uv run semantic-release -v publish
