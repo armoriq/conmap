@@ -29,4 +29,4 @@ jobs:
       - name: Test
         run: uv run pytest --cov=conmap --cov-report=term-missing
       - name: Semantic release
-        run: uv run semantic-release publish --verbosity=DEBUG
+        run: uv run semantic-release -v publish
