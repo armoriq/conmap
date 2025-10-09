@@ -39,7 +39,6 @@ dependencies = [
 
 [project.scripts]
 "conmap" = "conmap.cli:main"
-"semantic-release" = "semantic_release.cli:main"
 
 [project.optional-dependencies]
 dev = [
