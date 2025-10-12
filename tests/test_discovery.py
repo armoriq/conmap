@@ -23,7 +23,7 @@ async def test_probe_single_path_success():
             timeout=1.0,
         )
     assert probe.status_code == 200
-    assert probe.json == {"tools": []}
+    assert probe.json_payload == {"tools": []}
 
 
 @pytest.mark.asyncio
