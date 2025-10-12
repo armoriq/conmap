@@ -50,6 +50,7 @@ async def test_scan_async_aggregates(monkeypatch):
     monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
     monkeypatch.setattr("conmap.scanner.run_schema_inspector", fake_schema)
     monkeypatch.setattr("conmap.scanner.run_chain_detector", fake_chain)
+    monkeypatch.setattr("conmap.scanner.run_safe_mcp_detector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_llm_analyzer", fake_llm)
 
     config = ScanConfig()
@@ -60,6 +61,9 @@ async def test_scan_async_aggregates(monkeypatch):
     assert result.enhanced_vulnerabilities == result.vulnerabilities
     assert result.chain_attacks_detected == 0
     assert result.analysis_depth == "standard"
+    assert result.safe_mcp_techniques_total >= 20
+    assert result.safe_mcp_techniques_detected == 0
+    assert result.safe_mcp_technique_details == []
 
 
 def test_scan_sync(monkeypatch):
@@ -89,6 +93,7 @@ async def test_scan_async_uses_cache_path(monkeypatch):
     monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
     monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_safe_mcp_detector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_llm_analyzer", lambda endpoints, cache, enabled: [])
 
     calls = {}
@@ -102,6 +107,8 @@ async def test_scan_async_uses_cache_path(monkeypatch):
     assert result.endpoints == []
     assert calls["path"] == "/tmp/cache.json"
     assert result.analysis_depth == "standard"
+    assert result.safe_mcp_techniques_detected == 0
+    assert result.safe_mcp_technique_details == []
 
 
 @pytest.mark.asyncio
@@ -129,6 +136,7 @@ async def test_scan_async_basic_depth(monkeypatch):
     monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
     monkeypatch.setattr("conmap.scanner.run_schema_inspector", fake_schema)
     monkeypatch.setattr("conmap.scanner.run_chain_detector", fake_chain)
+    monkeypatch.setattr("conmap.scanner.run_safe_mcp_detector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_llm_analyzer", fake_llm)
 
     result = await scan_async(config)
@@ -136,3 +144,51 @@ async def test_scan_async_basic_depth(monkeypatch):
     assert markers["schema"] == 0
     assert markers["chain"] == 0
     assert markers["llm"] == 1
+
+
+@pytest.mark.asyncio
+async def test_scan_async_safe_mcp_summary(monkeypatch):
+    endpoint = McpEndpoint(
+        address="10.0.0.88",
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.88",
+        probes=[],
+        evidence=McpEvidence(),
+    )
+    metadata = ScanMetadata(
+        scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.1
+    )
+
+    async def fake_discover(config):
+        return [endpoint], metadata
+
+    monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
+    monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_llm_analyzer", lambda endpoints, cache, enabled: [])
+
+    safe_mcp_finding = Vulnerability(
+        endpoint=endpoint.base_url,
+        component="tool:exec",
+        category="safe_mcp.safe-t1101",
+        severity=Severity.critical,
+        message="test",
+        evidence={"technique": "SAFE-T1101"},
+        mitigation="",
+        detection_source="safe_mcp",
+    )
+
+    monkeypatch.setattr(
+        "conmap.scanner.run_safe_mcp_detector",
+        lambda endpoints: [safe_mcp_finding],
+    )
+
+    result = await scan_async(ScanConfig())
+    assert result.safe_mcp_techniques_detected == 1
+    assert result.safe_mcp_techniques_total >= 21
+    assert len(result.safe_mcp_technique_details) == 1
+    detail = result.safe_mcp_technique_details[0]
+    assert detail["id"] == "SAFE-T1101"
+    assert detail["detected_severity"] == "critical"
+    assert "tool:exec" in detail["affected_components"]

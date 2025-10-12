@@ -7,7 +7,7 @@ from .models import ScanResult
 
 
 def build_report(result: ScanResult) -> Dict[str, Any]:
-    return result.model_dump()
+    return result.model_dump(by_alias=True)
 
 
 def render_report(result: ScanResult, pretty: bool = True) -> str:

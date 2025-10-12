@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(str, Enum):
@@ -15,11 +15,17 @@ class Severity(str, Enum):
 
 
 class EndpointProbe(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     url: str
     path: str
     status_code: Optional[int] = None
     headers: Dict[str, str] = Field(default_factory=dict)
-    json: Optional[Any] = None
+    json_payload: Optional[Any] = Field(
+        default=None,
+        serialization_alias="json",
+        validation_alias="json",
+    )
     error: Optional[str] = None
 
 
@@ -77,10 +83,19 @@ class ScanResult(BaseModel):
     ai_analysis_enabled: bool = False
     chain_attacks_detected: int = 0
     analysis_depth: str = "standard"
+    safe_mcp_techniques_total: int = 0
+    safe_mcp_techniques_detected: int = 0
+    safe_mcp_technique_details: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ToolDescriptor(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
     description: Optional[str] = None
-    schema: Dict[str, Any] = Field(default_factory=dict)
+    schema_data: Dict[str, Any] = Field(
+        default_factory=dict,
+        serialization_alias="schema",
+        validation_alias="schema",
+    )
     metadata: Dict[str, Any] = Field(default_factory=dict)

@@ -149,8 +149,8 @@ async def _probe_paths(
         if probe.status_code and 200 <= probe.status_code < 400:
             evidence.capability_paths.append(probe.path)
             positive = True
-            if probe.json and is_likely_mcp_payload(probe.json):
-                evidence.json_structures.append(probe.json)
+            if probe.json_payload and is_likely_mcp_payload(probe.json_payload):
+                evidence.json_structures.append(probe.json_payload)
     return positive
 
 
@@ -176,5 +176,5 @@ async def _probe_single_path(
         path=path,
         status_code=response.status_code,
         headers={k: v for k, v in response.headers.items()},
-        json=payload,
+        json_payload=payload,
     )
