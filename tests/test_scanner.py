@@ -192,3 +192,60 @@ async def test_scan_async_safe_mcp_summary(monkeypatch):
     assert detail["id"] == "SAFE-T1101"
     assert detail["detected_severity"] == "critical"
     assert "tool:exec" in detail["affected_components"]
+
+
+@pytest.mark.asyncio
+async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
+    endpoint = McpEndpoint(
+        address="10.0.0.77",
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.77",
+        probes=[],
+        evidence=McpEvidence(),
+    )
+    metadata = ScanMetadata(
+        scanned_hosts=1, reachable_hosts=1, mcp_endpoints=1, duration_seconds=0.1
+    )
+
+    async def fake_discover(config):
+        return [endpoint], metadata
+
+    monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
+    monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_llm_analyzer", lambda endpoints, cache, enabled: [])
+
+    findings = [
+        Vulnerability(
+            endpoint=endpoint.base_url,
+            component="tool:one",
+            category="safe_mcp.safe-unknown",
+            severity=Severity.low,
+            message="first",
+            evidence={"technique": "SAFE-UNKNOWN"},
+            detection_source="safe_mcp",
+        ),
+        Vulnerability(
+            endpoint=endpoint.base_url,
+            component="tool:two",
+            category="safe_mcp.safe-unknown",
+            severity=Severity.critical,
+            message="second",
+            evidence={"technique": "SAFE-UNKNOWN"},
+            detection_source="safe_mcp",
+        ),
+    ]
+
+    monkeypatch.setattr("conmap.scanner.run_safe_mcp_detector", lambda endpoints: findings)
+    monkeypatch.setattr("conmap.scanner.safe_mcp_lookup", lambda technique: None)
+
+    result = await scan_async(ScanConfig())
+    assert result.safe_mcp_techniques_detected == 1
+    assert len(result.safe_mcp_technique_details) == 1
+    detail = result.safe_mcp_technique_details[0]
+    assert detail["id"] == "SAFE-UNKNOWN"
+    assert detail["name"] is None
+    assert detail["detected_severity"] == "critical"
+    assert detail["occurrences"] == 2
+    assert detail["affected_components"] == ["tool:one", "tool:two"]
