@@ -8,21 +8,40 @@ from ..models import McpEndpoint, Severity, Vulnerability
 logger = get_logger(__name__)
 
 
+def _preview_text(value: str, limit: int = 120) -> str:
+    if not value:
+        return ""
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
+
+
 def run_chain_detector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
     for endpoint in endpoints:
-        logger.debug("Evaluating chain attacks for %s", endpoint.base_url)
+        logger.info(
+            "Evaluating chain attacks endpoint=%s structures=%s",
+            endpoint.base_url,
+            len(endpoint.evidence.json_structures),
+        )
         nodes = _build_capability_nodes(endpoint)
-        logger.debug(
+        logger.info(
             "Built %s capability nodes (tools=%s resources=%s)",
             len(nodes),
             sum(1 for node in nodes if node["id"].startswith("tool:")),
             sum(1 for node in nodes if node["id"].startswith("resource:")),
         )
+        start = len(findings)
         findings.extend(_detect_data_exfiltration(endpoint.base_url, nodes))
         findings.extend(_detect_privilege_escalation(endpoint.base_url, nodes))
         findings.extend(_detect_code_execution(endpoint.base_url, nodes))
         findings.extend(_detect_database_compromise(endpoint.base_url, nodes))
+        logger.info(
+            "Chain detector endpoint=%s findings=%s",
+            endpoint.base_url,
+            len(findings) - start,
+        )
     return findings
 
 
@@ -35,7 +54,12 @@ def _build_capability_nodes(endpoint: McpEndpoint) -> List[Dict[str, Set[str]]]:
         for tool in tools:
             name = str(tool.get("name", "unknown"))
             description = str(tool.get("description", ""))
-            logger.debug("Analyzing tool node name=%s description=%s", name, description)
+            logger.info(
+                "Analyzing tool node endpoint=%s name=%s desc=%s",
+                endpoint.base_url,
+                name,
+                _preview_text(description),
+            )
             nodes.append(
                 {
                     "id": f"tool:{name}",
@@ -48,8 +72,11 @@ def _build_capability_nodes(endpoint: McpEndpoint) -> List[Dict[str, Set[str]]]:
         for resource in resources:
             resource_name = str(resource.get("name") or resource.get("uri") or "resource")
             description = str(resource.get("description", ""))
-            logger.debug(
-                "Analyzing resource node name=%s description=%s", resource_name, description
+            logger.info(
+                "Analyzing resource node endpoint=%s name=%s desc=%s",
+                endpoint.base_url,
+                resource_name,
+                _preview_text(description),
             )
             nodes.append(
                 {
@@ -147,7 +174,7 @@ def _detect_data_exfiltration(
                     evidence={"reader": reader, "network": networker},
                 )
             )
-            logger.debug(
+            logger.info(
                 "Chain detected (data exfiltration) %s -> %s", reader["id"], networker["id"]
             )
     return findings
@@ -192,7 +219,7 @@ def _detect_privilege_escalation(
                     evidence={"support": helper, "admin": admin},
                 )
             )
-            logger.debug(
+            logger.info(
                 "Chain detected (privilege escalation) %s -> %s",
                 helper["id"],
                 admin["id"],
@@ -238,7 +265,7 @@ def _detect_code_execution(
                     evidence={"file": file_node, "executor": exec_node},
                 )
             )
-            logger.debug(
+            logger.info(
                 "Chain detected (code execution) %s -> %s",
                 file_node["id"],
                 exec_node["id"],
@@ -280,7 +307,7 @@ def _detect_database_compromise(
                     evidence={"config": config, "database": db},
                 )
             )
-            logger.debug(
+            logger.info(
                 "Chain detected (database compromise) %s -> %s",
                 config["id"],
                 db["id"],

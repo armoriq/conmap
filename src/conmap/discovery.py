@@ -24,6 +24,15 @@ class DiscoveryStats:
         self.reachable_hosts = 0
 
 
+def _preview_text(text: str, limit: int = 160) -> str:
+    if not text:
+        return ""
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
+
+
 async def discover_mcp_endpoints(config: ScanConfig) -> Tuple[List[McpEndpoint], ScanMetadata]:
     stats = DiscoveryStats()
     start_time = time.monotonic()
@@ -42,7 +51,7 @@ async def discover_mcp_endpoints(config: ScanConfig) -> Tuple[List[McpEndpoint],
             targets = _prepare_target_urls(config.target_urls)
             stats.scanned_hosts += len(targets)
             for base_url in targets:
-                logger.debug("Queueing explicit target %s", base_url)
+                logger.info("Queueing explicit target=%s", base_url)
                 task = asyncio.create_task(
                     _scan_base_url(
                         semaphore=semaphore,
@@ -57,13 +66,13 @@ async def discover_mcp_endpoints(config: ScanConfig) -> Tuple[List[McpEndpoint],
         else:
             networks = discover_networks(config)
             for network in networks:
-                logger.debug("Discovered network %s", network)
+                logger.info("Discovered network=%s", network)
                 hosts = list(iter_target_hosts(network, include_self=config.include_self))
                 stats.scanned_hosts += len(hosts)
                 for host in hosts:
                     urls = build_candidate_urls(host, config.ports)
                     for base_url in urls:
-                        logger.debug("Queueing candidate %s", base_url)
+                        logger.info("Queueing candidate=%s", base_url)
                         task = asyncio.create_task(
                             _scan_base_url(
                                 semaphore=semaphore,
@@ -120,14 +129,22 @@ async def _scan_base_url(
         try:
             async with async_timeout.timeout(config.request_timeout):
                 root_response = await client.get(root_url)
-        except (httpx.HTTPError, asyncio.TimeoutError):
-            logger.debug("No response from %s", root_url)
+        except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+            logger.info("No response from %s error=%s", root_url, exc)
             return None
 
     parsed_root = urlparse(root_url)
     probe_path = parsed_root.path or "/"
 
     headers = {k: v for k, v in root_response.headers.items()}
+    content_type = headers.get("Content-Type")
+    logger.info(
+        "Root probe url=%s status=%s content_type=%s length=%s",
+        root_url,
+        root_response.status_code,
+        content_type,
+        len(root_response.text),
+    )
     probes.append(
         EndpointProbe(
             url=root_url,
@@ -154,6 +171,13 @@ async def _scan_base_url(
     if root_json:
         _record_structure(evidence, root_json)
         has_positive_signal = True
+        logger.info(
+            "Root JSON structure detected url=%s keys=%s",
+            root_url,
+            sorted(root_json.keys())[:8]
+            if isinstance(root_json, dict)
+            else type(root_json).__name__,
+        )
 
     discovered_paths = await _probe_paths(
         semaphore, client, base_url, config, probes, evidence, paths
@@ -172,12 +196,20 @@ async def _scan_base_url(
     has_positive_signal = has_positive_signal or jsonrpc_results
 
     if not has_positive_signal:
-        logger.debug("No MCP signals detected for %s", base_url)
+        logger.info("No MCP signals detected for %s", base_url)
         return None
 
     scheme, _, host_port = base_url.partition("://")
     host, _, port_str = host_port.partition(":")
     port = int(port_str) if port_str else (443 if scheme == "https" else 80)
+
+    logger.info(
+        "Endpoint confirmed base_url=%s capability_paths=%s headers=%s structures=%s",
+        base_url,
+        len(evidence.capability_paths),
+        list(evidence.headers.keys()),
+        len(evidence.json_structures),
+    )
 
     return McpEndpoint(
         address=host,
@@ -220,8 +252,16 @@ async def _probe_paths(
         if probe.status_code and 200 <= probe.status_code < 400:
             evidence.capability_paths.append(probe.path)
             positive = True
+            logger.info("Path probe success url=%s status=%s", probe.url, probe.status_code)
             if probe.json_payload:
                 _record_structure(evidence, probe.json_payload)
+                logger.info(
+                    "Path probe JSON detected url=%s keys=%s",
+                    probe.url,
+                    sorted(probe.json_payload.keys())[:8]
+                    if isinstance(probe.json_payload, dict)
+                    else type(probe.json_payload).__name__,
+                )
     return positive
 
 
@@ -248,7 +288,7 @@ async def _probe_jsonrpc(
             "method": method,
             "params": {},
         }
-        logger.debug("Queueing JSON-RPC call %s -> %s", method, rpc_url)
+        logger.info("Queueing JSON-RPC method=%s url=%s", method, rpc_url)
         tasks.append(
             asyncio.create_task(
                 _probe_jsonrpc_single(
@@ -269,6 +309,14 @@ async def _probe_jsonrpc(
             positive = True
             if probe.json_payload:
                 _record_structure(evidence, probe.json_payload)
+                logger.info(
+                    "JSON-RPC success method=%s status=%s keys=%s",
+                    probe.path,
+                    probe.status_code,
+                    sorted(probe.json_payload.keys())[:8]
+                    if isinstance(probe.json_payload, dict)
+                    else type(probe.json_payload).__name__,
+                )
     return positive
 
 
@@ -284,7 +332,7 @@ async def _probe_single_path(
             async with async_timeout.timeout(timeout):
                 response = await client.get(url)
         except (httpx.HTTPError, asyncio.TimeoutError) as exc:
-            logger.debug("Error fetching %s: %s", url, exc)
+            logger.info("Path probe error url=%s error=%s", url, exc)
             return EndpointProbe(url=url, path=path, error=str(exc))
     content_type = response.headers.get("Content-Type", "")
     payload = None
@@ -316,11 +364,11 @@ async def _probe_jsonrpc_single(
                     headers={"Content-Type": "application/json"},
                 )
         except (httpx.HTTPError, asyncio.TimeoutError) as exc:
-            logger.debug("JSON-RPC error for %s: %s", url, exc)
+            logger.info("JSON-RPC error for %s: %s", url, exc)
             return EndpointProbe(url=url, path=f"RPC:{method}", error=str(exc))
-    response_snippet = response.text[:2_048]
-    logger.debug(
-        "JSON-RPC response %s status=%s body=%s",
+    response_snippet = _preview_text(response.text[:2_048])
+    logger.info(
+        "JSON-RPC response method=%s status=%s snippet=%s",
         method,
         response.status_code,
         response_snippet,
@@ -361,7 +409,7 @@ def _prepare_target_urls(urls: List[str]) -> List[str]:
             logger.warning("Ignoring invalid target URL '%s'", raw)
             continue
         origin, is_https, dedupe_key = result
-        logger.debug("Normalized target '%s' -> origin=%s", raw, origin)
+        logger.info("Normalized target '%s' -> origin=%s", raw, origin)
         entry = seen.get(dedupe_key)
         if entry is not None:
             idx, existing_https = entry
@@ -417,5 +465,5 @@ def _normalize_target_url(url: str) -> Optional[tuple[str, bool, str]]:
     if query:
         key = f"{key}?{query}"
     dedupe_key = key.rstrip("/") if path == "/" and not query else key
-    logger.debug("Computed normalized=%s dedupe_key=%s", normalized_url, dedupe_key)
+    logger.info("Computed normalized=%s dedupe_key=%s", normalized_url, dedupe_key)
     return normalized_url, scheme == "https", dedupe_key

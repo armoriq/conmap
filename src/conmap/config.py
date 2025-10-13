@@ -42,6 +42,9 @@ class ScanConfig(BaseModel):
     cache_path: Optional[str] = None
     analysis_depth: Literal["basic", "standard", "deep"] = "standard"
     target_urls: List[str] = Field(default_factory=list)
+    enable_sandbox: bool = False
+    sandbox_max_runtime: float = Field(default=15.0, gt=0)
+    sandbox_max_tools: int = Field(default=5, ge=1, le=50)
 
     @classmethod
     def from_env(cls) -> "ScanConfig":
@@ -90,6 +93,15 @@ class ScanConfig(BaseModel):
         llm_batch_size = _env("CONMAP_LLM_BATCH_SIZE", "MCP_SCANNER_LLM_BATCH_SIZE")
         if llm_batch_size:
             data["llm_batch_size"] = int(llm_batch_size)
+        enable_sandbox = _env("CONMAP_ENABLE_SANDBOX", "MCP_SCANNER_ENABLE_SANDBOX")
+        if enable_sandbox:
+            data["enable_sandbox"] = enable_sandbox.lower() in {"1", "true", "yes"}
+        sandbox_runtime = _env("CONMAP_SANDBOX_MAX_RUNTIME", "MCP_SCANNER_SANDBOX_MAX_RUNTIME")
+        if sandbox_runtime:
+            data["sandbox_max_runtime"] = float(sandbox_runtime)
+        sandbox_max_tools = _env("CONMAP_SANDBOX_MAX_TOOLS", "MCP_SCANNER_SANDBOX_MAX_TOOLS")
+        if sandbox_max_tools:
+            data["sandbox_max_tools"] = int(sandbox_max_tools)
         try:
             return cls(**data)
         except ValidationError as exc:  # pragma: no cover - defensive

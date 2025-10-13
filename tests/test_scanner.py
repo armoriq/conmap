@@ -4,22 +4,44 @@ from conmap.config import ScanConfig
 from conmap.models import (
     McpEndpoint,
     McpEvidence,
+    EndpointProbe,
     ScanMetadata,
     ScanResult,
     Severity,
     Vulnerability,
 )
-from conmap.scanner import scan, scan_async
+from conmap.scanner import (
+    _build_policy_hints,
+    _evaluate_endpoint_posture,
+    _evaluate_runtime_anomalies,
+    _evaluate_tool_vetting,
+    _scan_output_leaks,
+    _RUNTIME_HISTORY,
+    scan,
+    scan_async,
+)
 
 
 @pytest.mark.asyncio
 async def test_scan_async_aggregates(monkeypatch):
     endpoint = McpEndpoint(
         address="10.0.0.8",
-        scheme="http",
-        port=80,
-        base_url="http://10.0.0.8",
-        probes=[],
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.8",
+        probes=[
+            EndpointProbe(
+                url="https://10.0.0.8/",
+                path="/",
+                status_code=200,
+                headers={
+                    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+                    "Content-Security-Policy": "default-src 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+        ],
         evidence=McpEvidence(),
     )
     metadata = ScanMetadata(
@@ -163,7 +185,19 @@ async def test_scan_async_safe_mcp_summary(monkeypatch):
         scheme="https",
         port=443,
         base_url="https://10.0.0.88",
-        probes=[],
+        probes=[
+            EndpointProbe(
+                url="https://10.0.0.88/",
+                path="/",
+                status_code=200,
+                headers={
+                    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+                    "Content-Security-Policy": "default-src 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+        ],
         evidence=McpEvidence(),
     )
     metadata = ScanMetadata(
@@ -216,7 +250,19 @@ async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
         scheme="https",
         port=443,
         base_url="https://10.0.0.77",
-        probes=[],
+        probes=[
+            EndpointProbe(
+                url="https://10.0.0.77/",
+                path="/",
+                status_code=200,
+                headers={
+                    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+                    "Content-Security-Policy": "default-src 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+        ],
         evidence=McpEvidence(),
     )
     metadata = ScanMetadata(
@@ -269,6 +315,230 @@ async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
     assert detail["affected_components"] == ["tool:one", "tool:two"]
     assert result.vulnerability_score == 30.0
     assert result.severity_level == "safe"
+
+
+def test_evaluate_endpoint_posture_detects_insecure_config():
+    endpoint = McpEndpoint(
+        address="10.0.0.1",
+        scheme="http",
+        port=80,
+        base_url="http://10.0.0.1",
+        probes=[
+            EndpointProbe(
+                url="http://10.0.0.1/",
+                path="/",
+                status_code=200,
+                headers={
+                    "Content-Type": "application/json",
+                },
+            )
+        ],
+        evidence=McpEvidence(),
+    )
+
+    findings = _evaluate_endpoint_posture(endpoint)
+    categories = {finding.category for finding in findings}
+    assert "posture.insecure_transport" in categories
+    assert "posture.missing_security_headers" in categories
+
+
+def test_build_policy_hints_groups_findings():
+    vulnerabilities = [
+        Vulnerability(
+            endpoint="http://target",
+            component="tool:demo",
+            category="schema.weak_validation",
+            severity=Severity.high,
+            message="Permissive schema",
+            evidence={},
+        ),
+        Vulnerability(
+            endpoint="http://target",
+            component="gateway",
+            category="posture.insecure_transport",
+            severity=Severity.critical,
+            message="HTTP endpoint",
+            evidence={},
+        ),
+        Vulnerability(
+            endpoint="http://target",
+            component="chain",
+            category="chain.data_exfiltration",
+            severity=Severity.medium,
+            message="Chain risk",
+            evidence={},
+        ),
+    ]
+
+    recommendations = _build_policy_hints(vulnerabilities)
+    assert recommendations
+    risks = {item["risk"] for item in recommendations}
+    assert "Tool Poisoning & Malicious Tooling" in risks
+    assert "Transport & Gateway Hardening" in risks
+    assert "Data Exfiltration & Lateral Movement" in risks
+
+
+def test_scan_output_leaks_detects_sensitive_data():
+    endpoint = McpEndpoint(
+        address="10.0.0.5",
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.5",
+        probes=[
+            EndpointProbe(
+                url="https://10.0.0.5/resource",
+                path="/resource",
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+                json_payload={"ssn": "111-22-3333"},
+            )
+        ],
+        evidence=McpEvidence(),
+    )
+
+    findings = _scan_output_leaks(endpoint)
+    categories = {finding.category for finding in findings}
+    assert "dlp.ssn" in categories
+
+
+def test_evaluate_runtime_anomalies_detects_ratio_shift():
+    _RUNTIME_HISTORY.clear()
+    endpoint = McpEndpoint(
+        address="10.0.0.6",
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.6",
+        probes=[
+            EndpointProbe(
+                url="https://10.0.0.6/ok",
+                path="/ok",
+                status_code=200,
+                headers={"Content-Length": "100"},
+            )
+            for _ in range(5)
+        ],
+        evidence=McpEvidence(),
+    )
+
+    # Establish baseline
+    assert _evaluate_runtime_anomalies(endpoint) == []
+
+    failing_endpoint = endpoint.model_copy()
+    failing_endpoint.probes = [
+        EndpointProbe(
+            url="https://10.0.0.6/fail",
+            path="/fail",
+            status_code=500,
+            headers={"Content-Length": "400"},
+        )
+        for _ in range(4)
+    ] + [
+        EndpointProbe(
+            url="https://10.0.0.6/fail",
+            path="/fail",
+            status_code=200,
+            headers={"Content-Length": "400"},
+        )
+    ]
+
+    findings = _evaluate_runtime_anomalies(failing_endpoint)
+    categories = {finding.category for finding in findings}
+    assert "runtime.success_ratio_shift" in categories
+
+
+def test_evaluate_tool_vetting_flags_missing_signature(monkeypatch):
+    endpoint = McpEndpoint(
+        address="10.0.0.9",
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.9",
+        probes=[],
+        evidence=McpEvidence(
+            json_structures=[
+                {
+                    "tools": [
+                        {
+                            "name": "admin_tool",
+                            "description": "reset passwords",
+                            "metadata": {
+                                "approved_at": "2024-01-01T00:00:00",
+                            },
+                        }
+                    ]
+                }
+            ]
+        ),
+    )
+
+    findings = _evaluate_tool_vetting(endpoint)
+    categories = {finding.category for finding in findings}
+    assert "governance.tool_unverified" in categories
+
+
+@pytest.mark.asyncio
+async def test_sandbox_execution_integrates_with_scan(monkeypatch):
+    config = ScanConfig(enable_sandbox=True)
+
+    endpoint = McpEndpoint(
+        address="10.0.0.55",
+        scheme="https",
+        port=443,
+        base_url="https://10.0.0.55",
+        probes=[
+            EndpointProbe(
+                url="https://10.0.0.55/",
+                path="/",
+                status_code=200,
+                headers={
+                    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+                    "Content-Security-Policy": "default-src 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+        ],
+        evidence=McpEvidence(
+            json_structures=[
+                {
+                    "tools": [
+                        {
+                            "name": "suspect",
+                            "metadata": {
+                                "sandbox_simulation": {
+                                    "network": ["198.51.100.10"],
+                                }
+                            },
+                        }
+                    ]
+                }
+            ]
+        ),
+    )
+
+    metadata = ScanMetadata(
+        scanned_hosts=1,
+        reachable_hosts=1,
+        mcp_endpoints=1,
+        duration_seconds=0.1,
+    )
+
+    async def fake_discover(_config):
+        return [endpoint], metadata
+
+    monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
+    monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
+    monkeypatch.setattr("conmap.scanner.run_safe_mcp_detector", lambda endpoints: [])
+    monkeypatch.setattr(
+        "conmap.scanner.run_llm_analyzer",
+        lambda endpoints, cache, enabled, batch_size=5: [],
+    )
+
+    result = await scan_async(config)
+    categories = {finding.category for finding in result.vulnerabilities}
+    assert "sandbox.network_exfiltration" in categories
+    risks = {item["risk"] for item in result.security_recommendations}
+    assert "Sandbox Behavior Anomalies" in risks
 
 
 def test_compute_vulnerability_score_progression():

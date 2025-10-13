@@ -216,15 +216,36 @@ SAFE_MCP_TECHNIQUES: Dict[str, TechniqueMeta] = {
 }
 
 
+def _format_names(items: List["ToolContext"], max_items: int = 5) -> str:
+    if not items:
+        return "none"
+    names = [item.name or "unknown" for item in items]
+    if len(names) <= max_items:
+        return ", ".join(names)
+    remaining = len(names) - max_items
+    return ", ".join(names[:max_items]) + f", ... (+{remaining} more)"
+
+
 def run_safe_mcp_detector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
     for endpoint in endpoints:
-        logger.debug(
-            "Running SAFE-MCP detector for %s (structures=%s)",
+        logger.info(
+            "Running SAFE-MCP detector endpoint=%s structures=%s",
             endpoint.base_url,
             len(endpoint.evidence.json_structures),
         )
         context = _build_endpoint_context(endpoint)
+        logger.info(
+            "SAFE-MCP context endpoint=%s tools=%s (%s) resources=%s (%s) headers=%s capability_paths=%s",
+            endpoint.base_url,
+            len(context.tools),
+            _format_names(context.tools),
+            len(context.resources),
+            _format_names(context.resources),
+            list(context.headers.keys()),
+            len(context.capability_paths),
+        )
+        start = len(findings)
         findings.extend(_detect_safe_t1001(endpoint, context))
         findings.extend(_detect_safe_t1002(endpoint, context))
         findings.extend(_detect_safe_t1003(endpoint, context))
@@ -246,6 +267,11 @@ def run_safe_mcp_detector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
         findings.extend(_detect_safe_t1703(endpoint, context))
         findings.extend(_detect_safe_t1705(endpoint, context))
         findings.extend(_detect_safe_t2107(endpoint, context))
+        logger.info(
+            "SAFE-MCP detector endpoint=%s findings=%s",
+            endpoint.base_url,
+            len(findings) - start,
+        )
     return findings
 
 
@@ -382,7 +408,7 @@ def _build_vulnerabilities(
             "tactic": technique.tactic,
             **match.evidence,
         }
-        logger.debug(
+        logger.info(
             "SAFE-MCP match %s component=%s severity=%s detail=%s",
             technique.identifier,
             match.component,
