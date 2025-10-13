@@ -12,11 +12,12 @@ Conmap discovers Model Context Protocol (MCP) endpoints on the local network and
 ## Features
 
 - **Subnet discovery** – Detects local subnets automatically and probes HTTP/HTTPS endpoints for MCP support.
-- **MCP fingerprinting** – Validates headers, capability manifests, and well-known paths to confirm MCP compatibility.
+- **Target-aware JSON-RPC probing** – When you supply explicit MCP URLs, Conmap issues the standard `initialize`, `tools/list`, `resources/list`, and `prompts/list` JSON-RPC calls as well as GET requests so nothing is missed.
+- **SAFE‑MCP coverage** – Reports SAFE-MCP technique matches alongside a 0 → 100 risk score that reflects the severity and detection source of every finding.
 - **Vulnerability analysis** – Applies Schema Inspector, Chain Attack Detector, and LLM Analyzer heuristics inspired by the safe-mcp framework.
-- **OpenAI integration** – Uses GPT-4o for semantic reviews of tool descriptions with transparent caching.
+- **OpenAI integration** – Uses GPT-4o for semantic reviews of tool descriptions with transparent caching and configurable batch sizing.
 - **Layered depth** – Choose basic, standard, or deep analysis (deep enables AI semantics and richer chain detection with privilege paths).
-- **Automation-ready output** – Produces structured JSON reports grouped by endpoint, tool, resource, and prompt.
+- **Automation-ready output** – Produces structured JSON reports grouped by endpoint, tool, resource, and prompt, including SAFE-MCP technique summaries and the cumulative risk score.
 - **Interfaces** – Provides both a Typer-based CLI and FastAPI server for flexible deployments.
 
 ## Quick Start
@@ -26,6 +27,8 @@ pip install conmap
 conmap scan --output report.json
 # Run a deeper AI-assisted assessment
 conmap scan --depth deep --output deep-report.json
+# Scan a specific MCP server with larger LLM batches
+conmap scan --url https://mcp.example.com --llm-batch-size 10 --depth deep
 ```
 
 To run the web service:
@@ -69,7 +72,9 @@ release, create a tag such as `v0.2.0`; the version embedded in the build will m
 - Set `OPENAI_API_KEY` for GPT-4o analysis.
 - Use `CONMAP_MAX_CONCURRENCY` and `CONMAP_TIMEOUT` (legacy `MCP_SCANNER_*`) to tune scanning behavior.
 - Control automation flags with `CONMAP_ENABLE_LLM_ANALYSIS` and analysis depth with `CONMAP_ANALYSIS_DEPTH` (`basic`, `standard`, `deep`).
-- The HTTP API accepts `analysis_depth` (`basic|standard|deep`) and `enable_ai` fields in the body of `POST /scan`.
+- Supply explicit targets with `CONMAP_TARGET_URLS` (comma-separated) or the CLI flag `--url`.
+- Tune OpenAI payload size with `CONMAP_LLM_BATCH_SIZE` (or CLI `--llm-batch-size`, API `llm_batch_size`).
+- The HTTP API accepts `analysis_depth` (`basic|standard|deep`), `enable_ai`, `llm_batch_size`, and `url` fields in the body of `POST /scan`.
 
 ## Publishing
 
