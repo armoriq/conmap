@@ -4,8 +4,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
+from ..logging import get_logger
 from ..models import EndpointProbe, McpEndpoint, Severity, Vulnerability
 from .chain_detector import _build_capability_nodes  # type: ignore
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -216,6 +219,11 @@ SAFE_MCP_TECHNIQUES: Dict[str, TechniqueMeta] = {
 def run_safe_mcp_detector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
     for endpoint in endpoints:
+        logger.debug(
+            "Running SAFE-MCP detector for %s (structures=%s)",
+            endpoint.base_url,
+            len(endpoint.evidence.json_structures),
+        )
         context = _build_endpoint_context(endpoint)
         findings.extend(_detect_safe_t1001(endpoint, context))
         findings.extend(_detect_safe_t1002(endpoint, context))
@@ -374,6 +382,13 @@ def _build_vulnerabilities(
             "tactic": technique.tactic,
             **match.evidence,
         }
+        logger.debug(
+            "SAFE-MCP match %s component=%s severity=%s detail=%s",
+            technique.identifier,
+            match.component,
+            (match.severity or technique.default_severity).value,
+            match.detail,
+        )
         vulns.append(
             Vulnerability(
                 endpoint=endpoint.base_url,
@@ -382,7 +397,7 @@ def _build_vulnerabilities(
                 severity=match.severity or technique.default_severity,
                 message=match.detail or technique.default_message,
                 mitigation=match.mitigation or technique.default_mitigation,
-                detection_source="safe_mcp",
+                detection_source="static",
                 evidence=evidence,
             )
         )

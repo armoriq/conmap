@@ -57,6 +57,8 @@ async def test_scan_base_url_detects_mcp():
             client=client,
             base_url="http://example.com",
             config=config,
+            paths=config.paths,
+            is_target=False,
         )
     assert endpoint is not None
     assert endpoint.evidence.capability_paths == ["/api/mcp"]
@@ -126,5 +128,77 @@ async def test_scan_base_url_without_evidence():
             client=client,
             base_url="http://example.com",
             config=config,
+            paths=config.paths,
+            is_target=False,
         )
     assert endpoint is None
+
+
+@pytest.mark.asyncio
+async def test_discover_mcp_endpoints_with_target_urls(monkeypatch):
+    captured = []
+    dummy_endpoint = McpEndpoint(
+        address="direct.example.com",
+        scheme="https",
+        port=443,
+        base_url="https://direct.example.com",
+        probes=[],
+        evidence=McpEvidence(),
+    )
+
+    async def fake_scan_base_url(**kwargs):
+        base_url = kwargs["base_url"]
+        captured.append(base_url)
+        if base_url == "https://direct.example.com/":
+            return dummy_endpoint
+        return None
+
+    called_networks = {"value": False}
+
+    def fake_discover_networks(config):
+        called_networks["value"] = True
+        return []
+
+    monkeypatch.setattr(discovery, "_scan_base_url", fake_scan_base_url)
+    monkeypatch.setattr(discovery, "discover_networks", fake_discover_networks)
+
+    config = ScanConfig(target_urls=["https://direct.example.com/", "direct.example.com"])
+    endpoints, metadata = await discovery.discover_mcp_endpoints(config)
+
+    assert called_networks["value"] is False
+    assert captured == ["https://direct.example.com/"]
+    assert metadata.mcp_endpoints == 1
+    assert metadata.scanned_hosts == 1
+    assert endpoints[0].base_url == "https://direct.example.com"
+
+
+def test_normalize_target_url_variants():
+    normalized = discovery._normalize_target_url("Example.COM:8080/api/mcp/")
+    assert normalized is not None
+    origin, is_https, dedupe_key = normalized
+    assert origin == "http://example.com:8080/api/mcp/"
+    assert is_https is False
+    assert dedupe_key == "example.com:8080/api/mcp/"
+
+
+def test_normalize_target_url_blank_returns_none():
+    assert discovery._normalize_target_url("   ") is None
+    assert discovery._normalize_target_url("") is None
+
+
+def test_prepare_target_urls_prefers_https_and_deduplicates():
+    urls = [
+        "http://mixed.example.com",
+        " https://mixed.example.com/ ",
+        "https://mixed.example.com",  # duplicate
+        "",
+        "http://other.example.com",
+        "http://other.example.com:8080",
+        "HTTPS://Other.example.com:8080/",
+    ]
+    targets = discovery._prepare_target_urls(urls)
+    assert targets == [
+        "https://mixed.example.com/",
+        "http://other.example.com/",
+        "https://other.example.com:8080/",
+    ]

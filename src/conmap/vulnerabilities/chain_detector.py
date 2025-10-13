@@ -2,13 +2,23 @@ from __future__ import annotations
 
 from typing import Dict, List, Set
 
+from ..logging import get_logger
 from ..models import McpEndpoint, Severity, Vulnerability
+
+logger = get_logger(__name__)
 
 
 def run_chain_detector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
     for endpoint in endpoints:
+        logger.debug("Evaluating chain attacks for %s", endpoint.base_url)
         nodes = _build_capability_nodes(endpoint)
+        logger.debug(
+            "Built %s capability nodes (tools=%s resources=%s)",
+            len(nodes),
+            sum(1 for node in nodes if node["id"].startswith("tool:")),
+            sum(1 for node in nodes if node["id"].startswith("resource:")),
+        )
         findings.extend(_detect_data_exfiltration(endpoint.base_url, nodes))
         findings.extend(_detect_privilege_escalation(endpoint.base_url, nodes))
         findings.extend(_detect_code_execution(endpoint.base_url, nodes))
@@ -25,6 +35,7 @@ def _build_capability_nodes(endpoint: McpEndpoint) -> List[Dict[str, Set[str]]]:
         for tool in tools:
             name = str(tool.get("name", "unknown"))
             description = str(tool.get("description", ""))
+            logger.debug("Analyzing tool node name=%s description=%s", name, description)
             nodes.append(
                 {
                     "id": f"tool:{name}",
@@ -37,6 +48,9 @@ def _build_capability_nodes(endpoint: McpEndpoint) -> List[Dict[str, Set[str]]]:
         for resource in resources:
             resource_name = str(resource.get("name") or resource.get("uri") or "resource")
             description = str(resource.get("description", ""))
+            logger.debug(
+                "Analyzing resource node name=%s description=%s", resource_name, description
+            )
             nodes.append(
                 {
                     "id": f"resource:{resource_name}",
@@ -133,6 +147,9 @@ def _detect_data_exfiltration(
                     evidence={"reader": reader, "network": networker},
                 )
             )
+            logger.debug(
+                "Chain detected (data exfiltration) %s -> %s", reader["id"], networker["id"]
+            )
     return findings
 
 
@@ -175,6 +192,11 @@ def _detect_privilege_escalation(
                     evidence={"support": helper, "admin": admin},
                 )
             )
+            logger.debug(
+                "Chain detected (privilege escalation) %s -> %s",
+                helper["id"],
+                admin["id"],
+            )
     return findings
 
 
@@ -216,6 +238,11 @@ def _detect_code_execution(
                     evidence={"file": file_node, "executor": exec_node},
                 )
             )
+            logger.debug(
+                "Chain detected (code execution) %s -> %s",
+                file_node["id"],
+                exec_node["id"],
+            )
     return findings
 
 
@@ -252,5 +279,10 @@ def _detect_database_compromise(
                     required_privileges=privilege_union,
                     evidence={"config": config, "database": db},
                 )
+            )
+            logger.debug(
+                "Chain detected (database compromise) %s -> %s",
+                config["id"],
+                db["id"],
             )
     return findings

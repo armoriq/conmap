@@ -6,8 +6,18 @@ from typing import Any, Dict
 from .models import ScanResult
 
 
+def _normalize(value):
+    if isinstance(value, dict):
+        return {key: _normalize(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_normalize(item) for item in value]
+    if isinstance(value, (set, tuple)):
+        return [_normalize(item) for item in value]
+    return value
+
+
 def build_report(result: ScanResult) -> Dict[str, Any]:
-    return result.model_dump(by_alias=True)
+    return _normalize(result.model_dump(by_alias=True))
 
 
 def render_report(result: ScanResult, pretty: bool = True) -> str:

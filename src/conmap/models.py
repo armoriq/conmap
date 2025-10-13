@@ -86,6 +86,8 @@ class ScanResult(BaseModel):
     safe_mcp_techniques_total: int = 0
     safe_mcp_techniques_detected: int = 0
     safe_mcp_technique_details: List[Dict[str, Any]] = Field(default_factory=list)
+    vulnerability_score: Optional[float] = None
+    severity_level: Optional[str] = None
 
 
 class ToolDescriptor(BaseModel):
