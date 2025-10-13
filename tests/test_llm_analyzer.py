@@ -1,4 +1,5 @@
 import importlib
+from types import SimpleNamespace
 
 from conmap.cache import Cache
 from conmap.models import McpEndpoint, McpEvidence
@@ -15,7 +16,7 @@ def test_llm_analyzer_skips_without_api_key(monkeypatch):
         probes=[],
         evidence=McpEvidence(json_structures=[{"tools": []}]),
     )
-    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True)
+    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True, batch_size=5)
     assert findings == []
 
 
@@ -29,7 +30,7 @@ def test_llm_analyzer_disabled(monkeypatch):
         probes=[],
         evidence=McpEvidence(json_structures=[{"tools": []}]),
     )
-    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=False)
+    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=False, batch_size=5)
     assert findings == []
 
 
@@ -55,7 +56,7 @@ def test_llm_analyzer_invalid_response(monkeypatch):
     monkeypatch.setattr(
         "conmap.vulnerabilities.llm_analyzer.OpenAI", lambda api_key: DummyClient(api_key)
     )
-    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True)
+    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True, batch_size=5)
     assert findings == []
 
 
@@ -115,7 +116,7 @@ def test_llm_analyzer_parses_dict_response(monkeypatch):
     monkeypatch.setattr(
         "conmap.vulnerabilities.llm_analyzer.OpenAI", lambda api_key: DummyClient(api_key)
     )
-    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True)
+    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True, batch_size=5)
     assert findings[0].ai_insight is not None
     assert findings[0].ai_insight.confidence == 92
 
@@ -186,12 +187,72 @@ def test_llm_analyzer_uses_cache(monkeypatch):
     monkeypatch.setattr("conmap.vulnerabilities.llm_analyzer.OpenAI", fake_openai)
 
     cache = Cache()
-    findings_first = llm_analyzer.run_llm_analyzer([endpoint], cache, enabled=True)
+    findings_first = llm_analyzer.run_llm_analyzer([endpoint], cache, enabled=True, batch_size=5)
     # Subsequent call should hit cache and reuse findings
-    findings_second = llm_analyzer.run_llm_analyzer([endpoint], cache, enabled=True)
+    findings_second = llm_analyzer.run_llm_analyzer([endpoint], cache, enabled=True, batch_size=5)
     assert findings_first[0].component == "demo"
     assert findings_first[0].detection_source == "llm"
     assert findings_first[0].ai_insight is not None
     assert findings_first[0].ai_insight.confidence == 88
     assert findings_second[0].message == "Issue"
     assert calls["count"] == 1
+
+
+def test_normalize_tool_handles_sets():
+    tool = {
+        "name": "multi",
+        "description": "example",
+        "schema": {"privileges": {"read", "write"}, "nested": [{"values": {"a", "b"}}]},
+    }
+    normalized = llm_analyzer._normalize_tool(tool)
+    privileges = normalized["schema"]["privileges"]
+    assert isinstance(privileges, list)
+    assert sorted(privileges) == ["read", "write"]
+    nested = normalized["schema"]["nested"][0]["values"]
+    assert isinstance(nested, list)
+    assert sorted(nested) == ["a", "b"]
+
+
+def test_call_openai_handles_output_text(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    payload = {"endpoint": "https://example.com", "tools": []}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            return SimpleNamespace(output_text='{"threats": []}', output=[])
+
+    dummy_client = SimpleNamespace(responses=DummyResponses())
+
+    result = llm_analyzer._call_openai(dummy_client, payload)
+    assert result == '{"threats": []}'
+
+
+def test_call_openai_handles_choices(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    payload = {"endpoint": "https://example.com", "tools": []}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            choice = SimpleNamespace(message={"content": '{"threats": [{"tool": "demo"}]}'})
+            return SimpleNamespace(output=[], choices=[choice])
+
+    dummy_client = SimpleNamespace(responses=DummyResponses())
+    result = llm_analyzer._call_openai(dummy_client, payload)
+    assert result == '{"threats": [{"tool": "demo"}]}'
+
+
+def test_call_openai_handles_api_error(monkeypatch):
+    class DummyAPIError(Exception):
+        pass
+
+    monkeypatch.setattr(llm_analyzer, "APIError", DummyAPIError)
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            raise DummyAPIError("boom")
+
+    dummy_client = SimpleNamespace(responses=DummyResponses())
+    result = llm_analyzer._call_openai(
+        dummy_client, {"endpoint": "https://example.com", "tools": []}
+    )
+    assert result is None

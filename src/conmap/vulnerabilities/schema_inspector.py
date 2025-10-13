@@ -4,14 +4,22 @@ import re
 from typing import Any, Dict, List
 
 from ..models import McpEndpoint, Severity, Vulnerability
+from ..logging import get_logger
 
 SENSITIVE_KEYS = {"command", "path", "file", "filepath", "directory", "target", "url"}
 DANGEROUS_DEFAULTS = {"admin", "root", "../", "..\\", "/etc/passwd", "~/.ssh", "C:\\Windows"}
+
+logger = get_logger(__name__)
 
 
 def run_schema_inspector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
     for endpoint in endpoints:
+        logger.debug(
+            "Inspecting schemas for %s (%s structures)",
+            endpoint.base_url,
+            len(endpoint.evidence.json_structures),
+        )
         for structure in endpoint.evidence.json_structures:
             tools = structure.get("tools") or []
             if isinstance(tools, dict):
@@ -20,6 +28,12 @@ def run_schema_inspector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
                 name = str(tool.get("name", "unknown"))
                 schema = _extract_schema(tool)
                 if schema:
+                    logger.debug(
+                        "Inspecting tool schema name=%s component=%s keys=%s",
+                        name,
+                        f"tool:{name}",
+                        sorted(schema.keys()),
+                    )
                     findings.extend(
                         _inspect_schema(
                             endpoint.base_url,
@@ -33,6 +47,12 @@ def run_schema_inspector(endpoints: List[McpEndpoint]) -> List[Vulnerability]:
                 name = str(resource.get("name", "unknown"))
                 schema = _extract_schema(resource)
                 if schema:
+                    logger.debug(
+                        "Inspecting resource schema name=%s component=%s keys=%s",
+                        name,
+                        f"resource:{name}",
+                        sorted(schema.keys()),
+                    )
                     findings.extend(
                         _inspect_schema(
                             endpoint.base_url,
@@ -58,6 +78,7 @@ def _inspect_schema(
 ) -> List[Vulnerability]:
     findings: List[Vulnerability] = []
     if not schema.get("type"):
+        logger.debug("Schema %s missing root type", component)
         findings.append(
             Vulnerability(
                 endpoint=endpoint,
@@ -73,6 +94,7 @@ def _inspect_schema(
     findings.extend(_check_schema_recursively(endpoint, component, schema, path="$"))
     if schema.get("type") == "object" and schema.get("properties"):
         if not schema.get("required"):
+            logger.debug("Schema %s missing required fields", component)
             findings.append(
                 Vulnerability(
                     endpoint=endpoint,
@@ -88,6 +110,7 @@ def _inspect_schema(
     enum_values = schema.get("enum")
     if isinstance(enum_values, list) and enum_values:
         if len(enum_values) > 10 or any(str(v) in {"*", "any", "all"} for v in enum_values):
+            logger.debug("Schema %s has permissive enum (%s values)", component, len(enum_values))
             findings.append(
                 Vulnerability(
                     endpoint=endpoint,
@@ -134,6 +157,7 @@ def _check_schema_recursively(
     default = schema.get("default")
     if isinstance(default, str):
         if any(token in default.lower() for token in ("admin", "root", "../", "..\\")):
+            logger.debug("Schema %s detected dangerous default '%s'", path, default)
             findings.append(
                 Vulnerability(
                     endpoint=endpoint,
@@ -147,6 +171,7 @@ def _check_schema_recursively(
                 )
             )
     if isinstance(default, str) and default in DANGEROUS_DEFAULTS:
+        logger.debug("Schema %s detected sensitive default '%s'", path, default)
         findings.append(
             Vulnerability(
                 endpoint=endpoint,
@@ -162,6 +187,7 @@ def _check_schema_recursively(
     if schema_type == "string":
         if not schema.get("maxLength") and not schema.get("pattern"):
             severity = Severity.medium
+            logger.debug("Schema %s string field lacks bounds", path)
             findings.append(
                 Vulnerability(
                     endpoint=endpoint,
@@ -175,6 +201,9 @@ def _check_schema_recursively(
                 )
             )
         if _is_sensitive_path(path) and not schema.get("enum") and not schema.get("pattern"):
+            logger.debug(
+                "Schema %s has sensitive parameter %s lacking strict validation", component, path
+            )
             findings.append(
                 Vulnerability(
                     endpoint=endpoint,
@@ -201,6 +230,7 @@ def _check_schema_recursively(
                 )
         additional_properties = schema.get("additionalProperties")
         if additional_properties is True:
+            logger.debug("Schema %s allows additionalProperties", path)
             findings.append(
                 Vulnerability(
                     endpoint=endpoint,

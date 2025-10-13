@@ -38,13 +38,14 @@ async def test_scan_async_aggregates(monkeypatch):
                 severity=Severity.low,
                 message="schema",
                 evidence={},
+                detection_source="static",
             )
         ]
 
     def fake_chain(endpoints):
         return []
 
-    def fake_llm(endpoints, cache, enabled=True):
+    def fake_llm(endpoints, cache, enabled=True, batch_size=5):
         return []
 
     monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
@@ -64,6 +65,8 @@ async def test_scan_async_aggregates(monkeypatch):
     assert result.safe_mcp_techniques_total >= 20
     assert result.safe_mcp_techniques_detected == 0
     assert result.safe_mcp_technique_details == []
+    assert result.vulnerability_score == 5.0
+    assert result.severity_level == "safe"
 
 
 def test_scan_sync(monkeypatch):
@@ -81,6 +84,8 @@ def test_scan_sync(monkeypatch):
     monkeypatch.setattr("conmap.scanner.scan_async", fake_scan_async)
     result = scan(ScanConfig())
     assert result == expected
+    assert expected.vulnerability_score is None
+    assert expected.severity_level is None
 
 
 @pytest.mark.asyncio
@@ -94,7 +99,10 @@ async def test_scan_async_uses_cache_path(monkeypatch):
     monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_safe_mcp_detector", lambda endpoints: [])
-    monkeypatch.setattr("conmap.scanner.run_llm_analyzer", lambda endpoints, cache, enabled: [])
+    monkeypatch.setattr(
+        "conmap.scanner.run_llm_analyzer",
+        lambda endpoints, cache, enabled, batch_size=5: [],
+    )
 
     calls = {}
 
@@ -109,6 +117,8 @@ async def test_scan_async_uses_cache_path(monkeypatch):
     assert result.analysis_depth == "standard"
     assert result.safe_mcp_techniques_detected == 0
     assert result.safe_mcp_technique_details == []
+    assert result.vulnerability_score == 0.0
+    assert result.severity_level == "safe"
 
 
 @pytest.mark.asyncio
@@ -128,7 +138,7 @@ async def test_scan_async_basic_depth(monkeypatch):
         markers["chain"] += 1
         return []
 
-    def fake_llm(endpoints, cache, enabled):
+    def fake_llm(endpoints, cache, enabled, batch_size=5):
         markers["llm"] += 1
         assert enabled is False
         return []
@@ -166,7 +176,10 @@ async def test_scan_async_safe_mcp_summary(monkeypatch):
     monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
     monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
-    monkeypatch.setattr("conmap.scanner.run_llm_analyzer", lambda endpoints, cache, enabled: [])
+    monkeypatch.setattr(
+        "conmap.scanner.run_llm_analyzer",
+        lambda endpoints, cache, enabled, batch_size=5: [],
+    )
 
     safe_mcp_finding = Vulnerability(
         endpoint=endpoint.base_url,
@@ -176,7 +189,7 @@ async def test_scan_async_safe_mcp_summary(monkeypatch):
         message="test",
         evidence={"technique": "SAFE-T1101"},
         mitigation="",
-        detection_source="safe_mcp",
+        detection_source="static",
     )
 
     monkeypatch.setattr(
@@ -192,6 +205,8 @@ async def test_scan_async_safe_mcp_summary(monkeypatch):
     assert detail["id"] == "SAFE-T1101"
     assert detail["detected_severity"] == "critical"
     assert "tool:exec" in detail["affected_components"]
+    assert result.vulnerability_score == 25.0
+    assert result.severity_level == "safe"
 
 
 @pytest.mark.asyncio
@@ -214,7 +229,10 @@ async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
     monkeypatch.setattr("conmap.scanner.discover_mcp_endpoints", fake_discover)
     monkeypatch.setattr("conmap.scanner.run_schema_inspector", lambda endpoints: [])
     monkeypatch.setattr("conmap.scanner.run_chain_detector", lambda endpoints: [])
-    monkeypatch.setattr("conmap.scanner.run_llm_analyzer", lambda endpoints, cache, enabled: [])
+    monkeypatch.setattr(
+        "conmap.scanner.run_llm_analyzer",
+        lambda endpoints, cache, enabled, batch_size=5: [],
+    )
 
     findings = [
         Vulnerability(
@@ -224,7 +242,7 @@ async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
             severity=Severity.low,
             message="first",
             evidence={"technique": "SAFE-UNKNOWN"},
-            detection_source="safe_mcp",
+            detection_source="static",
         ),
         Vulnerability(
             endpoint=endpoint.base_url,
@@ -233,7 +251,7 @@ async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
             severity=Severity.critical,
             message="second",
             evidence={"technique": "SAFE-UNKNOWN"},
-            detection_source="safe_mcp",
+            detection_source="static",
         ),
     ]
 
@@ -249,3 +267,37 @@ async def test_safe_mcp_summary_handles_unknown_technique(monkeypatch):
     assert detail["detected_severity"] == "critical"
     assert detail["occurrences"] == 2
     assert detail["affected_components"] == ["tool:one", "tool:two"]
+    assert result.vulnerability_score == 30.0
+    assert result.severity_level == "safe"
+
+
+def test_compute_vulnerability_score_progression():
+    from conmap.scanner import _compute_vulnerability_score
+
+    base_vulnerability = Vulnerability(
+        endpoint="http://example",
+        component="tool",
+        category="schema.issue",
+        severity=Severity.high,
+        message="",
+        evidence={},
+        detection_source="static",
+    )
+    score, level = _compute_vulnerability_score([base_vulnerability])
+    assert pytest.approx(score, rel=1e-3) == 18.0
+    assert level == "safe"
+
+    graph_vulnerability = base_vulnerability.model_copy(
+        update={"severity": Severity.critical, "detection_source": "graph"}
+    )
+    score, level = _compute_vulnerability_score([base_vulnerability, graph_vulnerability])
+    assert pytest.approx(score, rel=1e-3) == 18.0 + 25.0 * 1.3
+    assert level == "warning"
+
+    unknown_vulnerability = base_vulnerability.model_copy()
+    object.__setattr__(unknown_vulnerability, "severity", "mystery")
+    score, level = _compute_vulnerability_score(
+        [base_vulnerability, graph_vulnerability, unknown_vulnerability]
+    )
+    assert pytest.approx(score, rel=1e-3) == 18.0 + 25.0 * 1.3 + 5.0
+    assert level == "warning"

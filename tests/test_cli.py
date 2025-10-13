@@ -48,12 +48,30 @@ def test_cli_scan_depth_option(monkeypatch):
 
     async def fake_scan(config):
         captured["depth"] = config.analysis_depth
+        captured["target_urls"] = config.target_urls
         return fake_result()
 
     monkeypatch.setattr("conmap.cli.scan_async", fake_scan)
-    result = runner.invoke(cli.app, ["scan", "--depth", "deep"])
+    result = runner.invoke(
+        cli.app, ["scan", "--depth", "deep", "--url", "https://demo.example.com"]
+    )
     assert result.exit_code == 0, result.stdout
     assert captured["depth"] == "deep"
+    assert captured["target_urls"] == ["https://demo.example.com"]
+
+
+def test_cli_scan_custom_llm_batch(monkeypatch):
+    runner = CliRunner()
+    captured = {}
+
+    async def fake_scan(config):
+        captured["llm_batch_size"] = config.llm_batch_size
+        return fake_result()
+
+    monkeypatch.setattr("conmap.cli.scan_async", fake_scan)
+    result = runner.invoke(cli.app, ["scan", "--llm-batch-size", "12"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["llm_batch_size"] == 12
 
 
 def test_cli_api_invokes_uvicorn(monkeypatch):
@@ -71,3 +89,10 @@ def test_cli_api_invokes_uvicorn(monkeypatch):
     result = runner.invoke(cli.app, ["api", "--host", "0.0.0.0", "--port", "9000"])
     assert result.exit_code == 0, result.stdout
     assert calls["args"] == ("conmap.api:app", "0.0.0.0", 9000, "info")
+
+
+def test_cli_scan_invalid_depth():
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["scan", "--depth", "invalid"])
+    assert result.exit_code != 0
+    assert "Depth must be one of" in result.stdout

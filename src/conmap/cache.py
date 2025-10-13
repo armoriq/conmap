@@ -20,9 +20,10 @@ class Cache:
             if self._path.exists():
                 self._load()
 
-    @staticmethod
-    def _digest(payload: Dict[str, Any]) -> str:
-        serialized = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    @classmethod
+    def _digest(cls, payload: Dict[str, Any]) -> str:
+        normalized = cls._normalize(payload)
+        serialized = json.dumps(normalized, sort_keys=True).encode("utf-8")
         return hashlib.sha256(serialized).hexdigest()
 
     def get(self, payload: Dict[str, Any]) -> Optional[Any]:
@@ -42,7 +43,7 @@ class Cache:
         self._memory[key] = value
         if self._path:
             data = self._read()
-            data[key] = value
+            data[key] = self._normalize(value)
             tmp_path = self._path.with_suffix(".tmp")
             tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             os.replace(tmp_path, self._path)
@@ -61,3 +62,17 @@ class Cache:
         data = self._read()
         for key, value in data.items():
             self._memory[key] = value
+
+    @staticmethod
+    def _normalize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: Cache._normalize(value[k]) for k in sorted(value)}
+        if isinstance(value, list):
+            return [Cache._normalize(item) for item in value]
+        if isinstance(value, set):
+            return sorted(Cache._normalize(item) for item in value)
+        if isinstance(value, tuple):
+            return [Cache._normalize(item) for item in value]
+        if hasattr(value, "model_dump"):
+            return Cache._normalize(value.model_dump())
+        return value

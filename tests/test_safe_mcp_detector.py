@@ -47,6 +47,7 @@ def test_safe_t1001_tool_poisoning_detected():
     assert poisoning.evidence["technique_name"] == "Tool Poisoning Attack"
     assert poisoning.evidence["tactic"] == "Initial Access"
     assert poisoning.severity == Severity.critical
+    assert poisoning.detection_source == "static"
 
 
 def test_safe_t1002_supply_chain_flags_insecure_transport():

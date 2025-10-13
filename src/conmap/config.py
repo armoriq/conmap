@@ -28,10 +28,20 @@ class ScanConfig(BaseModel):
     request_timeout: float = Field(default=5.0, gt=0)
     verify_tls: bool = False
     paths: List[str] = Field(default_factory=lambda: list(DEFAULT_MCP_PATHS))
+    rpc_methods: List[str] = Field(
+        default_factory=lambda: [
+            "initialize",
+            "tools/list",
+            "resources/list",
+            "prompts/list",
+        ]
+    )
+    llm_batch_size: int = Field(default=5, ge=1, le=50)
     include_self: bool = False
     enable_llm_analysis: bool = True
     cache_path: Optional[str] = None
     analysis_depth: Literal["basic", "standard", "deep"] = "standard"
+    target_urls: List[str] = Field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "ScanConfig":
@@ -72,6 +82,14 @@ class ScanConfig(BaseModel):
             depth_normalized = depth.strip().lower()
             if depth_normalized in {"basic", "standard", "deep"}:
                 data["analysis_depth"] = depth_normalized
+        target_urls = _env("CONMAP_TARGET_URLS", "MCP_SCANNER_TARGET_URLS")
+        if target_urls:
+            urls = [url.strip() for url in target_urls.split(",") if url.strip()]
+            if urls:
+                data["target_urls"] = urls
+        llm_batch_size = _env("CONMAP_LLM_BATCH_SIZE", "MCP_SCANNER_LLM_BATCH_SIZE")
+        if llm_batch_size:
+            data["llm_batch_size"] = int(llm_batch_size)
         try:
             return cls(**data)
         except ValidationError as exc:  # pragma: no cover - defensive

@@ -13,6 +13,7 @@ def test_scan_config_defaults(monkeypatch):
     assert config.ports == [80, 443]
     assert config.paths == DEFAULT_MCP_PATHS
     assert config.verify_tls is False
+    assert config.target_urls == []
 
 
 def test_scan_config_env_overrides(monkeypatch):
@@ -25,6 +26,7 @@ def test_scan_config_env_overrides(monkeypatch):
     monkeypatch.setenv("CONMAP_CACHE_PATH", "/tmp/conmap-cache.json")
     monkeypatch.setenv("CONMAP_ANALYSIS_DEPTH", "deep")
     monkeypatch.setenv("CONMAP_ENABLE_LLM_ANALYSIS", "0")
+    monkeypatch.setenv("CONMAP_TARGET_URLS", "https://one.example.com, http://two.example.com/")
     config = ScanConfig.from_env()
     assert config.subnet == "10.0.0.0/30"
     assert config.ports == [8080, 8443]
@@ -35,6 +37,7 @@ def test_scan_config_env_overrides(monkeypatch):
     assert config.cache_path == "/tmp/conmap-cache.json"
     assert config.analysis_depth == "deep"
     assert config.enable_llm_analysis is False
+    assert config.target_urls == ["https://one.example.com", "http://two.example.com/"]
 
 
 def test_scan_config_legacy_env(monkeypatch):

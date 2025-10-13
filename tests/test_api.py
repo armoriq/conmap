@@ -48,13 +48,21 @@ def test_scan_endpoint(monkeypatch):
     async def fake_scan(config):
         seen["analysis_depth"] = config.analysis_depth
         seen["enable_llm_analysis"] = config.enable_llm_analysis
+        seen["target_urls"] = config.target_urls
+        seen["llm_batch_size"] = config.llm_batch_size
         return build_result()
 
     monkeypatch.setattr(api, "scan_async", fake_scan)
     client = TestClient(app)
     response = client.post(
         "/scan",
-        json={"subnet": "10.0.0.0/30", "analysis_depth": "deep", "enable_ai": True},
+        json={
+            "subnet": "10.0.0.0/30",
+            "analysis_depth": "deep",
+            "enable_ai": True,
+            "url": "https://mcp.example.com",
+            "llm_batch_size": 7,
+        },
     )
     assert response.status_code == 200
     data = response.json()
@@ -62,6 +70,8 @@ def test_scan_endpoint(monkeypatch):
     assert data["vulnerabilities"][0]["category"] == "schema.issue"
     assert seen["analysis_depth"] == "deep"
     assert seen["enable_llm_analysis"] is True
+    assert seen["target_urls"] == ["https://mcp.example.com"]
+    assert seen["llm_batch_size"] == 7
 
 
 def test_scan_endpoint_invalid_config(monkeypatch):
