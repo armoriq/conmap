@@ -23,13 +23,21 @@ logger = get_logger(__name__)
 
 
 async def scan_async(config: ScanConfig) -> ScanResult:
+    summary = "auto" if not config.target_urls else len(config.target_urls)
     logger.info(
         "Starting scan depth=%s llm_enabled=%s targets=%s",
         config.analysis_depth,
         config.enable_llm_analysis,
-        len(config.target_urls) if config.target_urls else "auto",
+        summary,
     )
+    await asyncio.sleep(0)
     endpoints, metadata = await discover_mcp_endpoints(config)
+    logger.info(
+        "Discovery summary endpoints=%s reachable_hosts=%s",
+        len(endpoints),
+        metadata.reachable_hosts,
+    )
+    await asyncio.sleep(0)
     cache = Cache(path=config.cache_path)
     findings = []
 
@@ -39,26 +47,31 @@ async def scan_async(config: ScanConfig) -> ScanResult:
 
     if run_structural:
         logger.info("Running schema inspector on %s endpoints", len(endpoints))
-        schema_findings = run_schema_inspector(endpoints)
+        await asyncio.sleep(0)
+        schema_findings = await asyncio.to_thread(run_schema_inspector, endpoints)
         _log_vulnerabilities(schema_findings)
         findings.extend(schema_findings)
 
         logger.info("Running chain detector")
-        chain_findings = run_chain_detector(endpoints)
+        await asyncio.sleep(0)
+        chain_findings = await asyncio.to_thread(run_chain_detector, endpoints)
         _log_vulnerabilities(chain_findings)
         findings.extend(chain_findings)
 
         logger.info("Running SAFE-MCP detector")
-        safe_mcp_findings = run_safe_mcp_detector(endpoints)
+        await asyncio.sleep(0)
+        safe_mcp_findings = await asyncio.to_thread(run_safe_mcp_detector, endpoints)
         _log_vulnerabilities(safe_mcp_findings)
         findings.extend(safe_mcp_findings)
 
     logger.info("Running LLM analyzer enabled=%s", enable_llm)
-    llm_findings = run_llm_analyzer(
+    await asyncio.sleep(0)
+    llm_findings = await asyncio.to_thread(
+        run_llm_analyzer,
         endpoints,
         cache,
-        enabled=enable_llm,
-        batch_size=config.llm_batch_size,
+        enable_llm,
+        config.llm_batch_size or 5,
     )
     _log_vulnerabilities(llm_findings)
     findings.extend(llm_findings)
@@ -88,6 +101,7 @@ async def scan_async(config: ScanConfig) -> ScanResult:
         safe_mcp_total,
         score,
     )
+    await asyncio.sleep(0)
 
     return ScanResult(
         metadata=metadata,
@@ -155,7 +169,7 @@ def _aggregate_safe_mcp_details(findings: List[Vulnerability]) -> List[Dict[str,
 
 def _log_vulnerabilities(vulnerabilities: List[Vulnerability]) -> None:
     for vuln in vulnerabilities:
-        logger.debug(
+        logger.info(
             "Vulnerability detected endpoint=%s component=%s category=%s severity=%s source=%s message=%s",
             vuln.endpoint,
             vuln.component,
@@ -184,12 +198,12 @@ def _compute_vulnerability_score(findings: List[Vulnerability]) -> tuple[float, 
 
     score = base_score
     bonus_unknown = 5.0
-    logger.debug("Calculating vulnerability score for %s findings", len(findings))
+    logger.info("Calculating vulnerability score for %s findings", len(findings))
     for finding in findings:
         severity_reward_value = severity_reward.get(finding.severity)
         weight = source_weight.get((finding.detection_source or "").lower(), 1.0)
         if severity_reward_value is None:
-            logger.debug(
+            logger.info(
                 "Unknown severity %s for category=%s; awarding bonus %.1f",
                 finding.severity,
                 finding.category,
@@ -199,14 +213,15 @@ def _compute_vulnerability_score(findings: List[Vulnerability]) -> tuple[float, 
             continue
         reward = severity_reward_value * weight
         score += reward
-        logger.debug(
-            "Adding %.2f (severity=%s reward=%.2f weight=%.2f source=%s category=%s)",
-            reward,
+        logger.info(
+            "Score update category=%s severity=%s source=%s delta=%.2f base_reward=%.2f weight=%.2f total=%.2f",
+            finding.category,
             finding.severity.value,
+            finding.detection_source,
+            reward,
             severity_reward_value,
             weight,
-            finding.detection_source,
-            finding.category,
+            score,
         )
 
     score = max(0.0, min(100.0, score))

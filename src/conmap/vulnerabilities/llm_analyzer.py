@@ -15,6 +15,25 @@ logger = get_logger(__name__)
 DEFAULT_MODEL = os.getenv("CONMAP_MODEL") or os.getenv("MCP_SCANNER_MODEL") or "gpt-4o"
 
 
+def _format_tool_list(names: List[str], max_items: int = 5) -> str:
+    filtered = [name or "unknown" for name in names if name]
+    if not filtered:
+        return "none"
+    if len(filtered) <= max_items:
+        return ", ".join(filtered)
+    remaining = len(filtered) - max_items
+    return ", ".join(filtered[:max_items]) + f", ... (+{remaining} more)"
+
+
+def _preview_text(text: str, limit: int = 160) -> str:
+    if not text:
+        return ""
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
+
+
 def run_llm_analyzer(
     endpoints: List[McpEndpoint],
     cache: Cache,
@@ -22,11 +41,11 @@ def run_llm_analyzer(
     batch_size: int = 5,
 ) -> List[Vulnerability]:
     if not enabled:
-        logger.debug("LLM analyzer disabled; skipping")
+        logger.info("LLM analyzer disabled; skipping")
         return []
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        logger.debug("OPENAI_API_KEY missing; skipping LLM analysis")
+        logger.info("OPENAI_API_KEY missing; skipping LLM analysis")
         return []
     client = OpenAI(api_key=api_key)
     findings: List[Vulnerability] = []
@@ -35,30 +54,85 @@ def run_llm_analyzer(
         empty = True
         for batch in batches:
             empty = False
+            tool_names = [str(tool.get("name", "unknown") or "unknown") for tool in batch]
+            tools_summary = _format_tool_list(tool_names)
+            description_preview = next(
+                (
+                    _preview_text(tool.get("description"), 120)
+                    for tool in batch
+                    if tool.get("description")
+                ),
+                "",
+            )
+            schema_preview = ""
+            for tool in batch:
+                schema = tool.get("schema") or {}
+                if schema:
+                    keys = sorted(schema.keys())
+                    if keys:
+                        max_keys = 5
+                        preview = ", ".join(keys[:max_keys])
+                        if len(keys) > max_keys:
+                            preview += f", ... (+{len(keys) - max_keys} more)"
+                        schema_preview = f"schema_keys=[{preview}]"
+                        break
+            context_bits = []
+            if description_preview:
+                context_bits.append(f'desc="{description_preview}"')
+            if schema_preview:
+                context_bits.append(schema_preview)
+            context_summary = "; ".join(context_bits)
             payload = {
                 "endpoint": endpoint.base_url,
                 "tools": [_normalize_tool(tool) for tool in batch],
             }
-            logger.debug("Prepared LLM batch for %s with %s tools", endpoint.base_url, len(batch))
+            logger.info(
+                "Prepared LLM batch endpoint=%s tools=%s context=%s",
+                endpoint.base_url,
+                tools_summary,
+                context_summary or "no descriptive metadata",
+            )
             cached = cache.get(payload)
             if cached:
-                logger.debug(
-                    "Using cached LLM analysis for %s (batch size %s)",
+                logger.info(
+                    "Using cached LLM analysis endpoint=%s tools=%s",
                     endpoint.base_url,
-                    len(batch),
+                    tools_summary,
                 )
-                findings.extend(_vulns_from_response(endpoint.base_url, cached))
+                findings.extend(_vulns_from_response(endpoint.base_url, cached, tools_summary))
                 continue
-            logger.debug("Invoking OpenAI for %s (batch size %s)", endpoint.base_url, len(batch))
-            response = _call_openai(client, payload)
+            logger.info(
+                "Invoking OpenAI model=%s endpoint=%s tools=%s context=%s",
+                DEFAULT_MODEL,
+                endpoint.base_url,
+                tools_summary,
+                context_summary or "no descriptive metadata",
+            )
+            response = _call_openai(
+                client,
+                payload,
+                endpoint.base_url,
+                tools_summary,
+                context_summary,
+            )
             if response:
                 cache.set(payload, response)
-                logger.debug("Received LLM response for %s", endpoint.base_url)
-                findings.extend(_vulns_from_response(endpoint.base_url, response))
+                response_preview = _preview_text(response, 200)
+                logger.info(
+                    "LLM response captured endpoint=%s tools=%s preview=%s",
+                    endpoint.base_url,
+                    tools_summary,
+                    response_preview or "<empty>",
+                )
+                findings.extend(_vulns_from_response(endpoint.base_url, response, tools_summary))
             else:
-                logger.warning("LLM analysis returned no response for %s", endpoint.base_url)
+                logger.warning(
+                    "LLM analysis returned no response endpoint=%s tools=%s",
+                    endpoint.base_url,
+                    tools_summary,
+                )
         if empty:
-            logger.debug("No tools found for %s; skipping LLM analysis", endpoint.base_url)
+            logger.info("No tools found for %s; skipping LLM analysis", endpoint.base_url)
     return findings
 
 
@@ -117,7 +191,19 @@ Return {{"threats": []}} when nothing is found.
 """
 
 
-def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
+def _call_openai(
+    client: OpenAI,
+    payload: Dict[str, Any],
+    endpoint: str = "unknown",
+    tools_summary: str = "unknown",
+    context_summary: str = "",
+) -> Optional[str]:
+    logger.info(
+        "Submitting LLM request endpoint=%s tools=%s context=%s",
+        endpoint,
+        tools_summary,
+        context_summary or "no descriptive metadata",
+    )
     try:
         response = client.responses.create(
             model=DEFAULT_MODEL,
@@ -134,12 +220,22 @@ def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
             temperature=0.2,
         )
     except APIError as exc:
-        logger.warning("OpenAI API error: %s", exc)
+        logger.warning(
+            "OpenAI API error endpoint=%s tools=%s error=%s",
+            endpoint,
+            tools_summary,
+            exc,
+        )
         return None
     text_chunks = []
     output_text = getattr(response, "output_text", None)
     if output_text:
-        logger.debug("LLM response output_text length=%s", len(output_text))
+        logger.info(
+            "LLM direct output endpoint=%s tools=%s body=%s",
+            endpoint,
+            tools_summary,
+            output_text,
+        )
         text_chunks.append(output_text)
     for item in getattr(response, "output", []):
         if getattr(item, "type", None) == "message":
@@ -160,19 +256,32 @@ def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
                     if isinstance(content, str):
                         text_chunks.append(content)
         if not text_chunks and hasattr(response, "output"):
-            logger.debug(
-                "LLM response lacked text output. types=%s raw=%s",
+            logger.info(
+                "LLM response endpoint=%s tools=%s lacked text output message_types=%s",
+                endpoint,
+                tools_summary,
                 [getattr(item, "type", None) for item in response.output],
-                getattr(response, "model_dump", lambda: str(response))(),
             )
     if not text_chunks:
-        logger.debug("LLM response contained no text output")
+        logger.info(
+            "LLM response contained no text output endpoint=%s tools=%s",
+            endpoint,
+            tools_summary,
+        )
         return None
-    logger.debug("LLM response contained %s text chunks", len(text_chunks))
-    return "\n".join(text_chunks)
+    combined = "\n".join(text_chunks)
+    logger.info(
+        "LLM aggregated response endpoint=%s tools=%s body=%s",
+        endpoint,
+        tools_summary,
+        combined,
+    )
+    return combined
 
 
-def _vulns_from_response(endpoint: str, response_text: str) -> List[Vulnerability]:
+def _vulns_from_response(
+    endpoint: str, response_text: str, tools_summary: str
+) -> List[Vulnerability]:
     try:
         data = json.loads(response_text)
     except json.JSONDecodeError:
@@ -221,7 +330,7 @@ def _vulns_from_response(endpoint: str, response_text: str) -> List[Vulnerabilit
                 evidence={"source": "openai", "rationale": insight.rationale},
             )
         )
-        logger.debug(
+        logger.info(
             "LLM insight endpoint=%s tool=%s severity=%s confidence=%s message=%s",
             endpoint,
             entry.get("tool", "llm"),
@@ -229,5 +338,17 @@ def _vulns_from_response(endpoint: str, response_text: str) -> List[Vulnerabilit
             insight.confidence,
             insight.threat,
         )
-    logger.debug("LLM analysis produced %s threats for %s", len(findings), endpoint)
+        logger.info(
+            "LLM insight rationale endpoint=%s tool=%s rationale=%s mitigation=%s",
+            endpoint,
+            entry.get("tool", "llm"),
+            insight.rationale,
+            insight.suggested_mitigation,
+        )
+    logger.info(
+        "LLM analysis produced %s threats endpoint=%s tools=%s",
+        len(findings),
+        endpoint,
+        tools_summary,
+    )
     return findings

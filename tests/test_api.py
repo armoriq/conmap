@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 import conmap.api as api
 from conmap.api import app
+from conmap.logging import publish_progress_message
 from conmap.models import (
     McpEndpoint,
     McpEvidence,
@@ -84,3 +85,24 @@ def test_scan_endpoint_invalid_config(monkeypatch):
     client = TestClient(app)
     response = client.post("/scan", json={})
     assert response.status_code == 400
+
+
+def test_scan_progress_peek_returns_backlog():
+    client = TestClient(app)
+    backlog_marker = "test-backlog-progress"
+    live_marker = "test-live-progress"
+
+    publish_progress_message(backlog_marker)
+
+    response = client.get("/scan-progress?peek=1")
+    assert response.status_code == 200
+    messages = response.json()["messages"]
+    assert backlog_marker in messages
+
+    publish_progress_message(live_marker)
+
+    response = client.get("/scan-progress?peek=1")
+    assert response.status_code == 200
+    messages = response.json()["messages"]
+    assert backlog_marker in messages
+    assert live_marker in messages
