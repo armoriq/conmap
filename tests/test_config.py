@@ -45,3 +45,27 @@ def test_scan_config_legacy_env(monkeypatch):
     monkeypatch.setenv("MCP_SCANNER_SUBNET", "192.168.1.0/24")
     config = ScanConfig.from_env()
     assert config.subnet == "192.168.1.0/24"
+
+
+def test_scan_config_headers_from_json(monkeypatch):
+    monkeypatch.setenv(
+        "CONMAP_HEADERS",
+        '{"Authorization": "Bearer base-token", "X-Test": "value"}',
+    )
+    config = ScanConfig.from_env()
+    assert config.default_headers == {
+        "Authorization": "Bearer base-token",
+        "X-Test": "value",
+    }
+
+
+def test_scan_config_headers_from_pairs(monkeypatch):
+    monkeypatch.setenv(
+        "CONMAP_HEADERS",
+        "Authorization: Bearer example-token, X-Trace: abc123 , InvalidEntry",
+    )
+    config = ScanConfig.from_env()
+    assert config.default_headers == {
+        "Authorization": "Bearer example-token",
+        "X-Trace": "abc123",
+    }

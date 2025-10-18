@@ -11,7 +11,7 @@ from ..cache import Cache
 from ..models import AIInsight, McpEndpoint, Severity, Vulnerability
 
 # Model configuration
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = os.getenv("CONMAP_MODEL") or os.getenv("MCP_SCANNER_MODEL") or "gpt-4o-mini"
 
 
 def run_llm_analyzer(
@@ -93,16 +93,7 @@ def _extract_tools_in_batches(
             if not isinstance(tool, dict):
                 continue
 
-            tools.append(
-                {
-                    "name": tool.get("name", "unknown"),
-                    "description": tool.get("description", ""),
-                    "inputSchema": tool.get("inputSchema")
-                    or tool.get("input_schema")
-                    or tool.get("schema")
-                    or {},
-                }
-            )
+            tools.append(_normalize_tool(tool))
 
     # Yield tools in batches
     for i in range(0, len(tools), batch_size):
@@ -143,44 +134,99 @@ DO NOT include any text before or after the JSON.
 ONLY return valid JSON."""
 
 
+def _normalize_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize tool definitions to a consistent, JSON-safe structure."""
+
+    def _sanitize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: _sanitize(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [_sanitize(item) for item in value]
+        if isinstance(value, set):
+            sanitized = [_sanitize(item) for item in value]
+            try:
+                return sorted(sanitized, key=lambda item: json.dumps(item, sort_keys=True))
+            except TypeError:
+                return sorted(sanitized, key=lambda item: str(item))
+        return value
+
+    sanitized_tool = _sanitize(tool)
+    schema = (
+        sanitized_tool.get("inputSchema")
+        or sanitized_tool.get("input_schema")
+        or sanitized_tool.get("schema")
+        or {}
+    )
+    sanitized_tool["inputSchema"] = schema
+    sanitized_tool["schema"] = schema
+    sanitized_tool["name"] = sanitized_tool.get("name", "unknown")
+    sanitized_tool["description"] = sanitized_tool.get("description", "")
+    return sanitized_tool
+
+
+def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
+    """Issue a request to OpenAI Responses API and extract the textual content."""
+    try:
+        response = client.responses.create(
+            model=DEFAULT_MODEL,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload, indent=2)},
+            ],
+            temperature=0.1,
+        )
+    except APIError as exc:
+        print(f"OpenAI API Error: {exc}")
+        return None
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"Unexpected error calling OpenAI: {exc}")
+        return None
+
+    text = getattr(response, "output_text", None)
+    if text:
+        return text
+
+    output = getattr(response, "output", None)
+    if output:
+        for item in output:
+            message = getattr(item, "message", None)
+            if message:
+                contents = getattr(message, "content", None)
+                if contents:
+                    for part in contents:
+                        part_type = getattr(part, "type", None)
+                        part_text = getattr(part, "text", None)
+                        if part_type == "text" and part_text:
+                            return part_text
+            text_attr = getattr(item, "text", None)
+            if text_attr:
+                return text_attr
+
+    choices = getattr(response, "choices", None)
+    if choices:
+        for choice in choices:
+            message = getattr(choice, "message", None)
+            if isinstance(message, dict):
+                content = message.get("content")
+            else:
+                content = getattr(message, "content", None)
+            if isinstance(content, str) and content:
+                return content
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text" and part.get("text"):
+                            return part["text"]
+
+    return None
+
+
 def _analyze_with_openai(
     client: OpenAI, endpoint_url: str, tools: List[Dict[str, Any]]
 ) -> Optional[str]:
-    """
-    Send tools to OpenAI for security analysis.
-
-    Args:
-        client: OpenAI client instance
-        endpoint_url: URL of the endpoint being analyzed
-        tools: List of tool definitions to analyze
-
-    Returns:
-        OpenAI response text or None if failed
-    """
-    user_message = json.dumps({"endpoint": endpoint_url, "tools": tools}, indent=2)
-
-    try:
-        response = client.chat.completions.create(
-            model=DEFAULT_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=0.1,
-            response_format={"type": "json_object"},
-        )
-
-        if response.choices and len(response.choices) > 0:
-            return response.choices[0].message.content
-
-        return None
-
-    except APIError as e:
-        print(f"OpenAI API Error: {e}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error calling OpenAI: {e}")
-        return None
+    """Compatibility shim retained for previous API usage."""
+    payload = {"endpoint": endpoint_url, "tools": tools}
+    return _call_openai(client, payload)
 
 
 def _clean_response_text(text: str) -> str:
@@ -284,7 +330,7 @@ def _parse_vulnerabilities(endpoint: str, response_text: str) -> List[Vulnerabil
             severity=severity,
             message=ai_insight.threat,
             mitigation=ai_insight.suggested_mitigation,
-            detection_source="openai_llm",
+            detection_source="llm",
             confidence=ai_insight.confidence,
             ai_insight=ai_insight,
             evidence={

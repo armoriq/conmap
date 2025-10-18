@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich import print_json
@@ -43,6 +43,12 @@ def scan(
         "-u",
         help="Scan a single MCP base URL instead of network discovery.",
     ),
+    header: Optional[List[str]] = typer.Option(
+        None,
+        "--header",
+        "-H",
+        help="Additional request header in the form KEY:VALUE. Can be provided multiple times.",
+    ),
     log_level: str = typer.Option(
         "info",
         "--log-level",
@@ -79,6 +85,16 @@ def scan(
     config = config.model_copy(update=updates)  # type: ignore[attr-defined]
     if url:
         config = config.model_copy(update={"target_urls": [url]})  # type: ignore[attr-defined]
+    if header:
+        parsed_headers = dict(config.default_headers)
+        for entry in header:
+            if ":" not in entry:
+                raise typer.BadParameter(
+                    "Headers must be provided as KEY:VALUE", param_hint="--header"
+                )
+            key, value = entry.split(":", 1)
+            parsed_headers[key.strip()] = value.strip()
+        config = config.model_copy(update={"default_headers": parsed_headers})  # type: ignore[attr-defined]
 
     logger.info("CLI scan invoked depth=%s url=%s", config.analysis_depth, url)
     result = asyncio.run(scan_async(config))

@@ -96,3 +96,22 @@ def test_cli_scan_invalid_depth():
     result = runner.invoke(cli.app, ["scan", "--depth", "invalid"])
     assert result.exit_code != 0
     assert "Depth must be one of" in result.stdout
+
+
+def test_cli_scan_merges_headers(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setenv("CONMAP_HEADERS", '{"Authorization": "Bearer base"}')
+    captured = {}
+
+    async def fake_scan(config):
+        captured["headers"] = config.default_headers
+        return fake_result()
+
+    monkeypatch.setattr("conmap.cli.scan_async", fake_scan)
+    result = runner.invoke(
+        cli.app,
+        ["scan", "--header", "X-Test: value", "--header", "Authorization: Bearer override"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["headers"]["Authorization"] == "Bearer override"
+    assert captured["headers"]["X-Test"] == "value"
