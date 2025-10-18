@@ -28,7 +28,7 @@ class ScanRequest(BaseModel):
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "okay"}
 
 
 @app.post("/scan")
