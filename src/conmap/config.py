@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import List, Literal, Optional
+import json
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -42,6 +43,7 @@ class ScanConfig(BaseModel):
     cache_path: Optional[str] = None
     analysis_depth: Literal["basic", "standard", "deep"] = "standard"
     target_urls: List[str] = Field(default_factory=list)
+    default_headers: Dict[str, str] = Field(default_factory=dict)
 
     @classmethod
     def from_env(cls) -> "ScanConfig":
@@ -90,6 +92,25 @@ class ScanConfig(BaseModel):
         llm_batch_size = _env("CONMAP_LLM_BATCH_SIZE", "MCP_SCANNER_LLM_BATCH_SIZE")
         if llm_batch_size:
             data["llm_batch_size"] = int(llm_batch_size)
+        headers = _env("CONMAP_HEADERS", "MCP_SCANNER_HEADERS")
+        if headers:
+            parsed_headers: Dict[str, str] = {}
+            try:
+                loaded = json.loads(headers)
+            except json.JSONDecodeError:
+                loaded = None
+            if isinstance(loaded, dict):
+                parsed_headers = {str(k): str(v) for k, v in loaded.items()}
+            else:
+                for pair in headers.split(","):
+                    if not pair.strip():
+                        continue
+                    if ":" not in pair:
+                        continue
+                    key, value = pair.split(":", 1)
+                    parsed_headers[key.strip()] = value.strip()
+            if parsed_headers:
+                data["default_headers"] = parsed_headers
         try:
             return cls(**data)
         except ValidationError as exc:  # pragma: no cover - defensive

@@ -33,7 +33,10 @@ async def discover_mcp_endpoints(config: ScanConfig) -> Tuple[List[McpEndpoint],
     logger.info("Starting MCP discovery (%s mode)", mode)
 
     async with httpx.AsyncClient(
-        verify=config.verify_tls, timeout=config.request_timeout, follow_redirects=True
+        verify=config.verify_tls,
+        timeout=config.request_timeout,
+        follow_redirects=True,
+        headers=config.default_headers or None,
     ) as client:
         semaphore = asyncio.Semaphore(config.concurrency)
         tasks: List[asyncio.Task[Optional[McpEndpoint]]] = []
@@ -175,9 +178,13 @@ async def _scan_base_url(
         logger.debug("No MCP signals detected for %s", base_url)
         return None
 
-    scheme, _, host_port = base_url.partition("://")
-    host, _, port_str = host_port.partition(":")
-    port = int(port_str) if port_str else (443 if scheme == "https" else 80)
+    parsed_endpoint = urlparse(base_url)
+    scheme = parsed_endpoint.scheme or "http"
+    host = parsed_endpoint.hostname or parsed_endpoint.netloc
+    if parsed_endpoint.port:
+        port = parsed_endpoint.port
+    else:
+        port = 443 if scheme == "https" else 80
 
     return McpEndpoint(
         address=host,
