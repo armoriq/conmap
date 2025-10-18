@@ -11,11 +11,7 @@ from ..cache import Cache
 from ..models import AIInsight, McpEndpoint, Severity, Vulnerability
 
 # Model configuration
-DEFAULT_MODEL = (
-    os.getenv("CONMAP_MODEL")
-    or os.getenv("MCP_SCANNER_MODEL")
-    or "gpt-4o-mini"
-)
+DEFAULT_MODEL = os.getenv("CONMAP_MODEL") or os.getenv("MCP_SCANNER_MODEL") or "gpt-4o-mini"
 
 
 def run_llm_analyzer(
@@ -149,9 +145,7 @@ def _normalize_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(value, set):
             sanitized = [_sanitize(item) for item in value]
             try:
-                return sorted(
-                    sanitized, key=lambda item: json.dumps(item, sort_keys=True)
-                )
+                return sorted(sanitized, key=lambda item: json.dumps(item, sort_keys=True))
             except TypeError:
                 return sorted(sanitized, key=lambda item: str(item))
         return value

@@ -26,7 +26,7 @@ jobs:
           pip install bandit pip-audit
       - name: Bandit SAST
         run: |
-          bandit -r src -ll -iii -f sarif -o bandit.sarif
+          bandit -r src -ll -iii -f json -o bandit.json
       - name: Dependency audit
         run: |
           pip-audit -f sarif -o pip-audit.sarif
