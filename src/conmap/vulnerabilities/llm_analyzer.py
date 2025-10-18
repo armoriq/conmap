@@ -150,15 +150,18 @@ def _normalize_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
                 return sorted(sanitized, key=lambda item: str(item))
         return value
 
-    normalized = {
-        "name": tool.get("name", "unknown"),
-        "description": tool.get("description", ""),
-        "inputSchema": tool.get("inputSchema")
-        or tool.get("input_schema")
-        or tool.get("schema")
-        or {},
-    }
-    return _sanitize(normalized)
+    sanitized_tool = _sanitize(tool)
+    schema = (
+        sanitized_tool.get("inputSchema")
+        or sanitized_tool.get("input_schema")
+        or sanitized_tool.get("schema")
+        or {}
+    )
+    sanitized_tool["inputSchema"] = schema
+    sanitized_tool["schema"] = schema
+    sanitized_tool["name"] = sanitized_tool.get("name", "unknown")
+    sanitized_tool["description"] = sanitized_tool.get("description", "")
+    return sanitized_tool
 
 
 def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
@@ -327,7 +330,7 @@ def _parse_vulnerabilities(endpoint: str, response_text: str) -> List[Vulnerabil
             severity=severity,
             message=ai_insight.threat,
             mitigation=ai_insight.suggested_mitigation,
-            detection_source="openai_llm",
+            detection_source="llm",
             confidence=ai_insight.confidence,
             ai_insight=ai_insight,
             evidence={
