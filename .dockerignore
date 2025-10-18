@@ -1,0 +1,92 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+.env/
+venv/
+ENV/
+env/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Development tools
+.pre-commit-config.yaml
+.flake8
+.bandit
+mypy.ini
+.mypy_cache/
+.ruff_cache/
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Reports and outputs (if you generate them locally)
+report.json
+deep-report.json
+*.json.bak
+
+# Docker files (no need to copy into the image)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Misc
+*.bak
+*.tmp
+.cache/

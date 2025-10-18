@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -7,6 +6,9 @@ from .config import ScanConfig
 from .logging import get_logger
 from .reporting import build_report
 from .scanner import scan_async
+
+# Load environment variables after imports
+load_dotenv()
 
 app = FastAPI(title="Conmap API", version="0.1.0")
 logger = get_logger(__name__)
@@ -26,7 +28,7 @@ class ScanRequest(BaseModel):
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "okay"}
 
 
 @app.post("/scan")
