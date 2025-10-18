@@ -28,6 +28,8 @@ jobs:
         run: |
           bandit -r src -ll -iii -f json -o bandit.json
       - name: Dependency audit
+        id: pip_audit
+        continue-on-error: true
         run: |
           pip-audit -f json -o pip-audit.json
       - name: Upload security reports
@@ -37,3 +39,8 @@ jobs:
           path: |
             bandit.json
             pip-audit.json
+      - name: Fail on vulnerability
+        if: steps.pip_audit.outcome == 'failure'
+        run: |
+          echo "pip-audit found vulnerabilities"
+          exit 1
