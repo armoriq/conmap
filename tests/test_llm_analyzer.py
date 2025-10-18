@@ -291,7 +291,7 @@ def test_call_openai_handles_choice_content_list(monkeypatch):
 
 
 def test_clean_response_text_strips_code_block():
-    raw = "```json\n{\"threats\": []}\n```"
+    raw = '```json\n{"threats": []}\n```'
     assert llm_analyzer._clean_response_text(raw) == '{"threats": []}'
 
 
