@@ -1,2 +1,0 @@
-# Temporary ignore for pip GHSA-4xh5-x5gv-qwph until pip 25.3 is available.
-ignore = ["GHSA-4xh5-x5gv-qwph"]
