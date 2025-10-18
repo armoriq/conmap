@@ -31,7 +31,7 @@ jobs:
         id: pip_audit
         continue-on-error: true
         run: |
-          pip-audit -f json -o pip-audit.json
+          pip-audit -f json -o pip-audit.json --config-file pip-audit.toml
       - name: Upload security reports
         uses: actions/upload-artifact@v4
         with:
