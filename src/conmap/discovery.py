@@ -175,8 +175,13 @@ async def _scan_base_url(
         logger.debug("No MCP signals detected for %s", base_url)
         return None
 
+    # FIXED: Properly parse scheme, host, and port
     scheme, _, host_port = base_url.partition("://")
+    # Remove trailing slashes before parsing
+    host_port = host_port.rstrip("/")
     host, _, port_str = host_port.partition(":")
+    # Strip any remaining slashes from port_str
+    port_str = port_str.rstrip("/") if port_str else ""
     port = int(port_str) if port_str else (443 if scheme == "https" else 80)
 
     return McpEndpoint(
