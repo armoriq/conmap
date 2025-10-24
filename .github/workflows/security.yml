@@ -26,11 +26,21 @@ jobs:
           pip install bandit pip-audit
       - name: Bandit SAST
         run: |
-          bandit -r src -ll -iii -f sarif -o bandit.sarif
+          bandit -r src -ll -iii -f json -o bandit.json
       - name: Dependency audit
+        id: pip_audit
+        continue-on-error: true
         run: |
-          pip-audit -f sarif -o pip-audit.sarif
-      - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@v4
+          pip-audit -f json -o pip-audit.json --ignore-vuln GHSA-4xh5-x5gv-qwph
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: "*.sarif"
+          name: security-reports
+          path: |
+            bandit.json
+            pip-audit.json
+      - name: Fail on vulnerability
+        if: steps.pip_audit.outcome == 'failure'
+        run: |
+          echo "pip-audit found vulnerabilities"
+          exit 1

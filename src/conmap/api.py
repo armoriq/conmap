@@ -1,11 +1,5 @@
-from __future__ import annotations
-
-import asyncio
-import queue
-from typing import AsyncIterator
-
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .config import ScanConfig
@@ -17,6 +11,9 @@ from .logging import (
 )
 from .reporting import build_report
 from .scanner import scan_async
+
+# Load environment variables after imports
+load_dotenv()
 
 app = FastAPI(title="Conmap API", version="0.1.0")
 logger = get_logger(__name__)
