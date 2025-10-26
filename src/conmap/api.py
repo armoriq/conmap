@@ -1,9 +1,19 @@
+import asyncio
+import queue
+from typing import AsyncIterator
+
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import ScanConfig
-from .logging import get_logger
+from .logging import (
+    get_logger,
+    get_progress_backlog,
+    register_progress_listener,
+    unregister_progress_listener,
+)
 from .reporting import build_report
 from .scanner import scan_async
 
@@ -63,3 +73,26 @@ async def scan_endpoint(request: ScanRequest) -> dict:
         result.vulnerability_score,
     )
     return build_report(result)
+
+
+@app.get("/scan-progress")
+async def scan_progress(request: Request) -> Response:
+    if request.query_params.get("peek") is not None:
+        return JSONResponse({"messages": get_progress_backlog()})
+    progress_queue, history = register_progress_listener()
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            for message in history:
+                yield f"data: {message}\n\n"
+            while True:
+                try:
+                    message = await asyncio.to_thread(progress_queue.get, True, 15.0)
+                except queue.Empty:
+                    yield ": heartbeat\n\n"
+                    continue
+                yield f"data: {message}\n\n"
+        finally:
+            unregister_progress_listener(progress_queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

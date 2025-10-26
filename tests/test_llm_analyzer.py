@@ -1,4 +1,5 @@
 import importlib
+import json
 from types import SimpleNamespace
 
 from conmap.cache import Cache
@@ -300,6 +301,91 @@ def test_parse_vulnerabilities_handles_list():
     findings = llm_analyzer._parse_vulnerabilities("https://demo", data)
     assert findings[0].component == "demo"
     assert findings[0].severity.name == "high"
+
+
+def test_format_tool_list_truncates():
+    names = ["one", "two", "three"]
+    formatted = llm_analyzer._format_tool_list(names, max_items=2)
+    assert formatted.startswith("one, two")
+    assert "(+1 more)" in formatted
+
+
+def test_preview_text_truncates_long_strings():
+    text = " ".join(["segment"] * 20)
+    preview = llm_analyzer._preview_text(text, limit=30)
+    assert preview.endswith("...")
+    assert len(preview) <= 33
+
+
+def test_clean_response_text_handles_empty():
+    assert llm_analyzer._clean_response_text("") == ""
+    assert llm_analyzer._clean_response_text("   ") == ""
+
+
+def test_parse_vulnerabilities_invalid_json():
+    result = llm_analyzer._parse_vulnerabilities("https://example", "{bad json")
+    assert result == []
+
+
+def test_parse_vulnerabilities_unexpected_structure():
+    assert (
+        llm_analyzer._parse_vulnerabilities("https://example", '{"threats": {"tool": "demo"}}')
+        == []
+    )
+    assert llm_analyzer._parse_vulnerabilities("https://example", '"unexpected-string"') == []
+
+
+def test_parse_vulnerabilities_confidence_bounds():
+    payload = json.dumps(
+        [
+            {"tool": "a", "threat": "low", "confidence": -5},
+            {"tool": "b", "threat": "info", "confidence": 10},
+            {"tool": "c", "threat": "crit", "confidence": 120},
+            {"tool": "d", "threat": "str", "confidence": "not-a-number"},
+        ]
+    )
+    findings = llm_analyzer._parse_vulnerabilities("https://demo", payload)
+    severities = {finding.component: finding.severity for finding in findings}
+    assert severities["a"].name == "info"
+    assert severities["b"].name == "info"
+    assert severities["c"].name == "critical"
+    assert severities["d"].name == "medium"
+
+
+def test_vulns_from_response_no_findings_logs():
+    result = llm_analyzer._vulns_from_response("https://demo", '{"threats": []}', "demo")
+    assert result == []
+
+
+def test_run_llm_analyzer_skips_endpoints_without_tools(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    endpoint = McpEndpoint(
+        address="host",
+        scheme="https",
+        port=443,
+        base_url="https://host",
+        probes=[],
+        evidence=McpEvidence(json_structures=[{"tools": []}]),
+    )
+    monkeypatch.setattr("conmap.vulnerabilities.llm_analyzer.OpenAI", lambda api_key: None)
+    findings = llm_analyzer.run_llm_analyzer([endpoint], Cache(), enabled=True, batch_size=5)
+    assert findings == []
+
+
+def test_call_openai_handles_non_message_output(monkeypatch):
+    payload = {"endpoint": "https://example.com", "tools": []}
+
+    class DummyItem:
+        type = "other"
+        text = '{"threats": []}'
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            return SimpleNamespace(output=[DummyItem()], output_text=None)
+
+    dummy_client = SimpleNamespace(responses=DummyResponses())
+    result = llm_analyzer._call_openai(dummy_client, payload)
+    assert result == '{"threats": []}'
 
 
 def test_extract_tools_handles_mapping(monkeypatch):

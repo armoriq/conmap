@@ -8,96 +8,34 @@ from typing import Any, Dict, Iterable, List, Optional
 from openai import APIError, OpenAI
 
 from ..cache import Cache
+from ..logging import get_logger
 from ..models import AIInsight, McpEndpoint, Severity, Vulnerability
 
 # Model configuration
 DEFAULT_MODEL = os.getenv("CONMAP_MODEL") or os.getenv("MCP_SCANNER_MODEL") or "gpt-4o-mini"
 
+_CODE_FENCE_PATTERN = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
-def run_llm_analyzer(
-    endpoints: List[McpEndpoint],
-    cache: Cache,
-    enabled: bool = True,
-    batch_size: int = 5,
-) -> List[Vulnerability]:
-    """
-    Analyze MCP endpoints using OpenAI LLM to detect semantic vulnerabilities.
-
-    Args:
-        endpoints: List of discovered MCP endpoints
-        cache: Cache for storing API responses
-        enabled: Whether LLM analysis is enabled
-        batch_size: Number of tools to analyze per API call (default: 5)
-
-    Returns:
-        List of vulnerabilities found by the LLM
-    """
-    if not enabled:
-        return []
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return []
-
-    client = OpenAI(api_key=api_key)
-    findings: List[Vulnerability] = []
-
-    for endpoint in endpoints:
-        batches = _extract_tools_in_batches(endpoint, batch_size=batch_size)
-
-        for batch in batches:
-            if not batch:
-                continue
-
-            # Check cache first
-            payload = {"endpoint": endpoint.base_url, "tools": batch}
-            cached_response = cache.get(payload)
-
-            if cached_response:
-                findings.extend(_parse_vulnerabilities(endpoint.base_url, cached_response))
-                continue
-
-            # Call OpenAI API
-            response = _analyze_with_openai(client, endpoint.base_url, batch)
-
-            if response:
-                cache.set(payload, response)
-                findings.extend(_parse_vulnerabilities(endpoint.base_url, response))
-
-    return findings
+logger = get_logger(__name__)
 
 
-def _extract_tools_in_batches(
-    endpoint: McpEndpoint, batch_size: int = 5
-) -> Iterable[List[Dict[str, Any]]]:
-    """
-    Extract and batch tools from endpoint evidence.
+def _format_tool_list(names: List[str], max_items: int = 5) -> str:
+    filtered = [name or "unknown" for name in names if name]
+    if not filtered:
+        return "none"
+    if len(filtered) <= max_items:
+        return ", ".join(filtered)
+    remaining = len(filtered) - max_items
+    return ", ".join(filtered[:max_items]) + f", ... (+{remaining} more)"
 
-    Args:
-        endpoint: MCP endpoint to extract tools from
-        batch_size: Number of tools per batch
 
-    Yields:
-        Batches of tool definitions
-    """
-    tools: List[Dict[str, Any]] = []
-
-    for structure in endpoint.evidence.json_structures:
-        raw_tools = structure.get("tools", [])
-
-        # Handle both list and dict formats
-        if isinstance(raw_tools, dict):
-            raw_tools = list(raw_tools.values())
-
-        for tool in raw_tools:
-            if not isinstance(tool, dict):
-                continue
-
-            tools.append(_normalize_tool(tool))
-
-    # Yield tools in batches
-    for i in range(0, len(tools), batch_size):
-        yield tools[i : i + batch_size]
+def _preview_text(text: str, limit: int = 160) -> str:
+    if not text:
+        return ""
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
 
 
 SYSTEM_PROMPT = """You are an expert security researcher specializing in Model Context Protocol (MCP) vulnerabilities.
@@ -134,6 +72,121 @@ DO NOT include any text before or after the JSON.
 ONLY return valid JSON."""
 
 
+def run_llm_analyzer(
+    endpoints: List[McpEndpoint],
+    cache: Cache,
+    enabled: bool = True,
+    batch_size: int = 5,
+) -> List[Vulnerability]:
+    """
+    Analyze MCP endpoints using OpenAI LLM to detect semantic vulnerabilities.
+    """
+    if not enabled:
+        logger.info("LLM analyzer disabled; skipping")
+        return []
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.info("OPENAI_API_KEY missing; skipping LLM analysis")
+        return []
+
+    client = OpenAI(api_key=api_key)
+    findings: List[Vulnerability] = []
+
+    for endpoint in endpoints:
+        batches = list(_extract_tools_in_batches(endpoint, batch_size=batch_size))
+        if not batches:
+            logger.info("No tools found for %s; skipping LLM analysis", endpoint.base_url)
+            continue
+
+        for batch in batches:
+            tool_names = [str(tool.get("name", "unknown") or "unknown") for tool in batch]
+            tools_summary = _format_tool_list(tool_names)
+            description_preview = next(
+                (
+                    _preview_text(tool.get("description"), 120)
+                    for tool in batch
+                    if tool.get("description")
+                ),
+                "",
+            )
+            schema_preview = ""
+            for tool in batch:
+                schema = tool.get("schema") or {}
+                if schema:
+                    keys = sorted(schema.keys())
+                    if keys:
+                        preview = ", ".join(keys[:5])
+                        if len(keys) > 5:
+                            preview += f", ... (+{len(keys) - 5} more)"
+                        schema_preview = f"schema_keys=[{preview}]"
+                        break
+            context_bits = []
+            if description_preview:
+                context_bits.append(f'desc="{description_preview}"')
+            if schema_preview:
+                context_bits.append(schema_preview)
+            context_summary = "; ".join(context_bits)
+
+            normalized_batch = [_normalize_tool(tool) for tool in batch]
+            payload = {"endpoint": endpoint.base_url, "tools": normalized_batch}
+
+            cached_response = cache.get(payload)
+            if cached_response:
+                logger.info(
+                    "Using cached LLM analysis endpoint=%s tools=%s",
+                    endpoint.base_url,
+                    tools_summary,
+                )
+                findings.extend(
+                    _vulns_from_response(endpoint.base_url, cached_response, tools_summary)
+                )
+                continue
+
+            response_text = _call_openai(
+                client,
+                payload,
+                endpoint=endpoint.base_url,
+                tools_summary=tools_summary,
+                context_summary=context_summary,
+            )
+            if not response_text:
+                logger.warning(
+                    "LLM analysis returned no response endpoint=%s tools=%s",
+                    endpoint.base_url,
+                    tools_summary,
+                )
+                continue
+
+            cache.set(payload, response_text)
+            findings.extend(_vulns_from_response(endpoint.base_url, response_text, tools_summary))
+
+    return findings
+
+
+def _extract_tools_in_batches(
+    endpoint: McpEndpoint, batch_size: int = 5
+) -> Iterable[List[Dict[str, Any]]]:
+    """
+    Extract and batch tools from endpoint evidence.
+    """
+    tools: List[Dict[str, Any]] = []
+
+    for structure in endpoint.evidence.json_structures:
+        raw_tools = structure.get("tools", [])
+
+        if isinstance(raw_tools, dict):
+            raw_tools = list(raw_tools.values())
+
+        for tool in raw_tools:
+            if not isinstance(tool, dict):
+                continue
+            tools.append(_normalize_tool(tool))
+
+    for i in range(0, len(tools), batch_size):
+        yield tools[i : i + batch_size]
+
+
 def _normalize_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize tool definitions to a consistent, JSON-safe structure."""
 
@@ -164,8 +217,19 @@ def _normalize_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized_tool
 
 
-def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
-    """Issue a request to OpenAI Responses API and extract the textual content."""
+def _call_openai(
+    client: OpenAI,
+    payload: Dict[str, Any],
+    endpoint: str = "unknown",
+    tools_summary: str = "unknown",
+    context_summary: str = "",
+) -> Optional[str]:
+    logger.info(
+        "Submitting LLM request endpoint=%s tools=%s context=%s",
+        endpoint,
+        tools_summary,
+        context_summary or "no descriptive metadata",
+    )
     try:
         response = client.responses.create(
             model=DEFAULT_MODEL,
@@ -176,170 +240,213 @@ def _call_openai(client: OpenAI, payload: Dict[str, Any]) -> Optional[str]:
             temperature=0.1,
         )
     except APIError as exc:
-        print(f"OpenAI API Error: {exc}")
-        return None
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"Unexpected error calling OpenAI: {exc}")
+        logger.warning(
+            "OpenAI API error endpoint=%s tools=%s error=%s",
+            endpoint,
+            tools_summary,
+            exc,
+        )
         return None
 
-    text = getattr(response, "output_text", None)
-    if text:
-        return text
+    text_chunks: List[str] = []
 
-    output = getattr(response, "output", None)
-    if output:
-        for item in output:
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        logger.info(
+            "LLM direct output endpoint=%s tools=%s body=%s",
+            endpoint,
+            tools_summary,
+            output_text,
+        )
+        text_chunks.append(output_text)
+
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", None) == "message":
             message = getattr(item, "message", None)
             if message:
-                contents = getattr(message, "content", None)
-                if contents:
-                    for part in contents:
-                        part_type = getattr(part, "type", None)
-                        part_text = getattr(part, "text", None)
-                        if part_type == "text" and part_text:
-                            return part_text
-            text_attr = getattr(item, "text", None)
-            if text_attr:
-                return text_attr
+                contents = getattr(message, "content", [])
+                for content in contents or []:
+                    if getattr(content, "type", None) == "text":
+                        text = getattr(content, "text", None)
+                        if isinstance(text, str) and text:
+                            text_chunks.append(text)
+        else:
+            text = getattr(item, "text", None)
+            if isinstance(text, str) and text:
+                text_chunks.append(text)
 
-    choices = getattr(response, "choices", None)
-    if choices:
-        for choice in choices:
-            message = getattr(choice, "message", None)
-            if isinstance(message, dict):
-                content = message.get("content")
-            else:
-                content = getattr(message, "content", None)
-            if isinstance(content, str) and content:
-                return content
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text" and part.get("text"):
-                            return part["text"]
+    if not text_chunks:
+        choices = getattr(response, "choices", None)
+        if choices:
+            for choice in choices:
+                message = getattr(choice, "message", None)
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    if isinstance(content, str) and content:
+                        text_chunks.append(content)
+                elif hasattr(message, "content"):
+                    contents = getattr(message, "content", [])
+                    if isinstance(contents, list):
+                        for part in contents:
+                            if isinstance(part, dict):
+                                text = part.get("text")
+                                if isinstance(text, str) and text:
+                                    text_chunks.append(text)
+                            elif hasattr(part, "text"):
+                                text = getattr(part, "text", None)
+                                if isinstance(text, str) and text:
+                                    text_chunks.append(text)
 
-    return None
+    if not text_chunks:
+        logger.info(
+            "LLM response endpoint=%s tools=%s lacked text output",
+            endpoint,
+            tools_summary,
+        )
+        return None
+
+    combined = "\n".join(text_chunks)
+    logger.info(
+        "LLM aggregated response endpoint=%s tools=%s body=%s",
+        endpoint,
+        tools_summary,
+        combined,
+    )
+    return combined
 
 
-def _analyze_with_openai(
-    client: OpenAI, endpoint_url: str, tools: List[Dict[str, Any]]
-) -> Optional[str]:
-    """Compatibility shim retained for previous API usage."""
-    payload = {"endpoint": endpoint_url, "tools": tools}
-    return _call_openai(client, payload)
-
-
-def _clean_response_text(text: str) -> str:
-    """
-    Clean OpenAI response by removing markdown code blocks and extra whitespace.
-
-    Args:
-        text: Raw response text from OpenAI
-
-    Returns:
-        Cleaned JSON string
-    """
-    text = text.strip()
-
-    # Remove markdown code blocks (```json ... ``` or ``` ... ```)
-    code_block_pattern = r"^```(?:json)?\s*\n(.*?)\n```$"
-    match = re.match(code_block_pattern, text, re.DOTALL)
-    if match:
-        text = match.group(1).strip()
-
-    # Remove leading/trailing backticks if present
-    text = text.strip("`").strip()
-
-    return text
+def _clean_response_text(response_text: str) -> str:
+    if not response_text:
+        return ""
+    cleaned = response_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = _CODE_FENCE_PATTERN.sub("", cleaned).strip()
+    return cleaned
 
 
 def _parse_vulnerabilities(endpoint: str, response_text: str) -> List[Vulnerability]:
-    """
-    Parse OpenAI response and convert to Vulnerability objects.
-
-    Args:
-        endpoint: Endpoint URL
-        response_text: JSON response from OpenAI
-
-    Returns:
-        List of Vulnerability objects
-    """
-    # Clean the response
     cleaned_text = _clean_response_text(response_text)
-
-    # Parse JSON
-    try:
-        data = json.loads(cleaned_text)
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse OpenAI response as JSON: {e}")
-        print(f"Response text: {cleaned_text[:500]}")
+    if not cleaned_text:
         return []
 
-    # Extract threats
+    try:
+        data = json.loads(cleaned_text)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Failed to parse OpenAI response endpoint=%s error=%s preview=%s",
+            endpoint,
+            exc,
+            _preview_text(cleaned_text, 120),
+        )
+        return []
+
     if isinstance(data, dict):
         threats = data.get("threats", [])
     elif isinstance(data, list):
         threats = data
     else:
-        print(f"Unexpected response format: {type(data)}")
+        logger.warning(
+            "Unexpected response format endpoint=%s type=%s",
+            endpoint,
+            type(data).__name__,
+        )
         return []
 
     if not isinstance(threats, list):
-        print(f"Threats is not a list: {type(threats)}")
+        logger.warning(
+            "Threats payload not a list endpoint=%s type=%s",
+            endpoint,
+            type(threats).__name__,
+        )
         return []
 
-    # Convert threats to vulnerabilities
     findings: List[Vulnerability] = []
 
-    for threat in threats:
-        if not isinstance(threat, dict):
+    for entry in threats:
+        if not isinstance(entry, dict):
             continue
 
-        # Extract and validate confidence
-        try:
-            confidence = float(threat.get("confidence", 0))
-            confidence = max(0, min(100, confidence))  # Clamp to 0-100
-        except (TypeError, ValueError):
-            confidence = 50  # Default to medium confidence
+        tool_name = str(entry.get("tool") or "unknown")
+        threat_message = str(entry.get("threat") or "Unknown threat")
 
-        # Map confidence to severity
-        if confidence >= 85:
+        try:
+            confidence_value = float(entry.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence_value = 50.0
+
+        confidence_value = max(0.0, min(100.0, confidence_value))
+
+        if confidence_value >= 85:
             severity = Severity.critical
-        elif confidence >= 70:
+        elif confidence_value >= 70:
             severity = Severity.high
-        elif confidence >= 50:
+        elif confidence_value >= 50:
             severity = Severity.medium
-        elif confidence >= 30:
+        elif confidence_value >= 30:
             severity = Severity.low
         else:
             severity = Severity.info
 
-        # Create AI insight
         ai_insight = AIInsight(
-            threat=str(threat.get("threat", "Unknown threat")),
-            confidence=int(confidence),
-            rationale=str(threat.get("rationale", "")),
-            suggested_mitigation=threat.get("suggestedMitigation"),
+            threat=threat_message,
+            confidence=int(confidence_value),
+            rationale=str(entry.get("rationale") or ""),
+            suggested_mitigation=entry.get("suggestedMitigation"),
         )
 
-        # Create vulnerability
-        vulnerability = Vulnerability(
+        finding = Vulnerability(
             endpoint=endpoint,
-            component=str(threat.get("tool", "unknown")),
-            category="llm.semantic_analysis",
+            component=tool_name,
+            category="llm.analysis",
             severity=severity,
-            message=ai_insight.threat,
-            mitigation=ai_insight.suggested_mitigation,
+            message=threat_message,
+            evidence={"tool": tool_name},
+            mitigation=entry.get("suggestedMitigation"),
             detection_source="llm",
-            confidence=ai_insight.confidence,
+            confidence=float(ai_insight.confidence),
             ai_insight=ai_insight,
-            evidence={
-                "source": "openai",
-                "model": DEFAULT_MODEL,
-                "rationale": ai_insight.rationale,
-            },
         )
+        findings.append(finding)
 
-        findings.append(vulnerability)
+    return findings
 
+
+def _vulns_from_response(
+    endpoint: str, response_text: str, tools_summary: str
+) -> List[Vulnerability]:
+    findings = _parse_vulnerabilities(endpoint, response_text)
+
+    if not findings:
+        logger.info(
+            "LLM analysis produced 0 threats endpoint=%s tools=%s",
+            endpoint,
+            tools_summary,
+        )
+        return []
+
+    for finding in findings:
+        confidence = finding.ai_insight.confidence if finding.ai_insight else finding.confidence
+        logger.info(
+            "LLM insight endpoint=%s tool=%s severity=%s confidence=%s message=%s",
+            endpoint,
+            finding.component,
+            finding.severity.value,
+            confidence,
+            finding.message,
+        )
+        if finding.ai_insight:
+            logger.info(
+                "LLM insight rationale endpoint=%s tool=%s rationale=%s mitigation=%s",
+                endpoint,
+                finding.component,
+                finding.ai_insight.rationale,
+                finding.ai_insight.suggested_mitigation,
+            )
+
+    logger.info(
+        "LLM analysis produced %s threats endpoint=%s tools=%s",
+        len(findings),
+        endpoint,
+        tools_summary,
+    )
     return findings
