@@ -33,7 +33,7 @@ jobs:
         run: |
           pip-audit -f json -o pip-audit.json --ignore-vuln GHSA-4xh5-x5gv-qwph
       - name: Upload security reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: security-reports
           path: |
