@@ -33,6 +33,28 @@ def _preview_text(text: str, limit: int = 160) -> str:
     return compact[:limit].rstrip() + "..."
 
 
+async def _establish_sse_session(
+    client: httpx.AsyncClient, url: str, timeout: float
+) -> Optional[str]:
+    """Establish SSE session and return session ID"""
+    try:
+        async with async_timeout.timeout(timeout):
+            response = await client.get(
+                url,
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "Cache-Control": "no-cache",
+                },
+            )
+            session_id = response.headers.get("mcp-session-id")
+            if session_id:
+                logger.info("Established SSE session url=%s session_id=%s", url, session_id)
+                return session_id
+    except Exception as exc:
+        logger.info("Failed to establish SSE session url=%s error=%s", url, exc)
+    return None
+
+
 async def discover_mcp_endpoints(config: ScanConfig) -> Tuple[List[McpEndpoint], ScanMetadata]:
     stats = DiscoveryStats()
     start_time = time.monotonic()
@@ -45,7 +67,7 @@ async def discover_mcp_endpoints(config: ScanConfig) -> Tuple[List[McpEndpoint],
         verify=config.verify_tls,
         timeout=config.request_timeout,
         follow_redirects=True,
-        headers=config.default_headers or None,
+        headers={"Accept": "application/json, text/event-stream", **(config.default_headers or {})},
     ) as client:
         semaphore = asyncio.Semaphore(config.concurrency)
         tasks: List[asyncio.Task[Optional[McpEndpoint]]] = []
@@ -285,17 +307,48 @@ async def _probe_jsonrpc(
         return False
 
     positive = False
-    tasks: List[asyncio.Task[EndpointProbe]] = []
     rpc_url = base_url.rstrip("/") if base_url.endswith("/") else base_url
 
+    # Establish ONE session for all RPC calls
+    session_id = None
+    async with semaphore:
+        try:
+            async with async_timeout.timeout(config.request_timeout):
+                init_response = await client.get(
+                    rpc_url,
+                    headers={
+                        "Accept": "application/json, text/event-stream",
+                        "Cache-Control": "no-cache",
+                    },
+                )
+                session_id = init_response.headers.get("mcp-session-id")
+                logger.info(
+                    "Established session for all RPC calls url=%s session_id=%s",
+                    rpc_url,
+                    session_id,
+                )
+        except Exception as exc:
+            logger.info("Failed to establish session url=%s error=%s", rpc_url, exc)
+
+    tasks: List[asyncio.Task[EndpointProbe]] = []
+
     for method in methods:
+        if method == "initialize":
+            params = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "conmap-scanner", "version": "1.0.0"},
+            }
+        else:
+            params = {}
+
         body = {
             "jsonrpc": "2.0",
             "id": f"conmap-{method}",
             "method": method,
-            "params": {},
+            "params": params,
         }
-        logger.info("Queueing JSON-RPC method=%s url=%s", method, rpc_url)
+        logger.info("Queueing JSON-RPC method=%s url=%s session_id=%s", method, rpc_url, session_id)
         tasks.append(
             asyncio.create_task(
                 _probe_jsonrpc_single(
@@ -305,6 +358,7 @@ async def _probe_jsonrpc(
                     method=method,
                     payload=body,
                     timeout=config.request_timeout,
+                    session_id=session_id,  # Pass the shared session ID
                 )
             )
         )
@@ -313,17 +367,17 @@ async def _probe_jsonrpc(
         probe = await task
         probes.append(probe)
         if probe.status_code and 200 <= probe.status_code < 400:
-            positive = True
-            if probe.json_payload:
-                _record_structure(evidence, probe.json_payload)
-                logger.info(
-                    "JSON-RPC success method=%s status=%s keys=%s",
-                    probe.path,
-                    probe.status_code,
-                    sorted(probe.json_payload.keys())[:8]
-                    if isinstance(probe.json_payload, dict)
-                    else type(probe.json_payload).__name__,
-                )
+            if probe.json_payload and isinstance(probe.json_payload, dict):
+                result = probe.json_payload.get("result")
+                error = probe.json_payload.get("error")
+                if result is not None and error is None:
+                    positive = True
+                    _record_structure(evidence, probe.json_payload)
+                    logger.info(
+                        "JSON-RPC success method=%s status=%s",
+                        probe.path,
+                        probe.status_code,
+                    )
     return positive
 
 
@@ -354,6 +408,22 @@ async def _probe_single_path(
     )
 
 
+def _parse_sse_response(text: str) -> Optional[Dict[str, Any]]:
+    """Parse SSE response and extract JSON data"""
+    if not text:
+        return None
+
+    # SSE format: "data: {...}\n\n"
+    lines = text.strip().split("\n")
+    for line in lines:
+        if line.startswith("data: "):
+            json_str = line[6:]  # Remove "data: " prefix
+            return safe_json_parse(json_str)
+
+    # Try parsing the whole text as JSON
+    return safe_json_parse(text)
+
+
 async def _probe_jsonrpc_single(
     semaphore: asyncio.Semaphore,
     client: httpx.AsyncClient,
@@ -361,26 +431,46 @@ async def _probe_jsonrpc_single(
     method: str,
     payload: Dict[str, Any],
     timeout: float,
+    session_id: Optional[str] = None,  # Add session_id parameter
 ) -> EndpointProbe:
     async with semaphore:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+
+        if session_id:
+            headers["mcp-session-id"] = session_id
+        else:
+            logger.warning("No session ID available for method=%s", method)
+
         try:
             async with async_timeout.timeout(timeout):
                 response = await client.post(
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                 )
         except (httpx.HTTPError, asyncio.TimeoutError) as exc:
             logger.info("JSON-RPC error for %s: %s", url, exc)
             return EndpointProbe(url=url, path=f"RPC:{method}", error=str(exc))
+
     response_snippet = _preview_text(response.text[:2_048])
     logger.info(
-        "JSON-RPC response method=%s status=%s snippet=%s",
+        "JSON-RPC response method=%s status=%s content_type=%s snippet=%s",
         method,
         response.status_code,
+        response.headers.get("content-type"),
         response_snippet,
     )
-    data = safe_json_parse(response.text[:100_000])
+
+    # Parse SSE or regular JSON
+    content_type = response.headers.get("content-type", "")
+    if "event-stream" in content_type:
+        data = _parse_sse_response(response.text[:100_000])
+    else:
+        data = safe_json_parse(response.text[:100_000])
+
     return EndpointProbe(
         url=url,
         path=f"RPC:{method}",
