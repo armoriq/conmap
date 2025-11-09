@@ -5,7 +5,7 @@ import pytest
 
 from conmap import discovery
 from conmap.config import ScanConfig
-from conmap.models import McpEndpoint, McpEvidence
+from conmap.models import McpEvidence
 
 
 @pytest.mark.asyncio
@@ -67,6 +67,8 @@ async def test_scan_base_url_detects_mcp():
 
 @pytest.mark.asyncio
 async def test_discover_mcp_endpoints(monkeypatch):
+    from conmap.models import McpEndpoint
+
     dummy_endpoint = McpEndpoint(
         address="10.0.0.11",
         scheme="http",
@@ -136,6 +138,8 @@ async def test_scan_base_url_without_evidence():
 
 @pytest.mark.asyncio
 async def test_discover_mcp_endpoints_with_target_urls(monkeypatch):
+    from conmap.models import McpEndpoint
+
     captured = []
     dummy_endpoint = McpEndpoint(
         address="direct.example.com",
@@ -190,7 +194,7 @@ def test_prepare_target_urls_prefers_https_and_deduplicates():
     urls = [
         "http://mixed.example.com",
         " https://mixed.example.com/ ",
-        "https://mixed.example.com",  # duplicate
+        "https://mixed.example.com",
         "",
         "http://other.example.com",
         "http://other.example.com:8080",
@@ -202,3 +206,222 @@ def test_prepare_target_urls_prefers_https_and_deduplicates():
         "http://other.example.com/",
         "https://other.example.com:8080/",
     ]
+
+
+@pytest.mark.asyncio
+async def test_probe_jsonrpc_with_session():
+    call_count = {"get": 0, "post": 0}
+    session_id = "test-session-abc123"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            call_count["get"] += 1
+            return httpx.Response(
+                200, headers={"mcp-session-id": session_id}, json={"status": "ok"}
+            )
+        elif request.method == "POST":
+            call_count["post"] += 1
+            assert request.headers.get("mcp-session-id") == session_id
+            body = request.read()
+            import json
+
+            data = json.loads(body)
+            method = data.get("method")
+
+            if method == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    text='data: {"jsonrpc":"2.0","id":"conmap-initialize","result":{"protocolVersion":"2024-11-05"}}\n\n',
+                )
+            elif method == "tools/list":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    text='data: {"jsonrpc":"2.0","id":"conmap-tools/list","result":{"tools":[]}}\n\n',
+                )
+            else:
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"jsonrpc": "2.0", "id": data.get("id"), "result": {}},
+                )
+        return httpx.Response(404)
+
+    config = ScanConfig(rpc_methods=["initialize", "tools/list"])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probes = []
+        evidence = McpEvidence()
+        result = await discovery._probe_jsonrpc(
+            semaphore=asyncio.Semaphore(5),
+            client=client,
+            base_url="http://example.com",
+            config=config,
+            probes=probes,
+            evidence=evidence,
+            methods=config.rpc_methods,
+        )
+
+    assert call_count["get"] == 1
+    assert call_count["post"] == 2
+    assert result is True
+    assert len(probes) == 2
+
+
+@pytest.mark.asyncio
+async def test_probe_jsonrpc_without_session():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"status": "ok"})
+        elif request.method == "POST":
+            body = request.read()
+            import json
+
+            data = json.loads(body)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"jsonrpc": "2.0", "id": data.get("id"), "result": {}},
+            )
+        return httpx.Response(404)
+
+    config = ScanConfig(rpc_methods=["initialize"])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probes = []
+        evidence = McpEvidence()
+        result = await discovery._probe_jsonrpc(
+            semaphore=asyncio.Semaphore(5),
+            client=client,
+            base_url="http://example.com",
+            config=config,
+            probes=probes,
+            evidence=evidence,
+            methods=config.rpc_methods,
+        )
+
+    assert len(probes) == 1
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_probe_jsonrpc_single_with_session():
+    session_id = "test-session-xyz"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("mcp-session-id") == session_id
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"jsonrpc": "2.0", "id": "test-1", "result": {"tools": []}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = await discovery._probe_jsonrpc_single(
+            semaphore=asyncio.Semaphore(1),
+            client=client,
+            url="http://example.com/api/mcp",
+            method="tools/list",
+            payload={"jsonrpc": "2.0", "method": "tools/list", "id": "test-1", "params": {}},
+            timeout=5.0,
+            session_id=session_id,
+        )
+
+    assert probe.status_code == 200
+    assert probe.json_payload is not None
+    assert "result" in probe.json_payload
+
+
+@pytest.mark.asyncio
+async def test_probe_jsonrpc_single_sse_response():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text='data: {"jsonrpc":"2.0","id":"test-1","result":{"tools":[{"name":"test"}]}}\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = await discovery._probe_jsonrpc_single(
+            semaphore=asyncio.Semaphore(1),
+            client=client,
+            url="http://example.com/api/mcp",
+            method="tools/list",
+            payload={"jsonrpc": "2.0", "method": "tools/list", "id": "test-1"},
+            timeout=5.0,
+            session_id="test-session",
+        )
+
+    assert probe.status_code == 200
+    assert probe.json_payload is not None
+    assert probe.json_payload.get("result", {}).get("tools") == [{"name": "test"}]
+
+
+@pytest.mark.asyncio
+async def test_probe_jsonrpc_detects_errors():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, headers={"mcp-session-id": "session-123"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "conmap-tools/list",
+                "error": {"code": -32602, "message": "Invalid params"},
+            },
+        )
+
+    config = ScanConfig(rpc_methods=["tools/list"])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probes = []
+        evidence = McpEvidence()
+        result = await discovery._probe_jsonrpc(
+            semaphore=asyncio.Semaphore(5),
+            client=client,
+            base_url="http://example.com",
+            config=config,
+            probes=probes,
+            evidence=evidence,
+            methods=config.rpc_methods,
+        )
+
+    assert result is False
+
+
+def test_parse_sse_response():
+    sse_text = 'data: {"jsonrpc":"2.0","id":"1","result":{"tools":[]}}\n\n'
+    result = discovery._parse_sse_response(sse_text)
+    assert result == {"jsonrpc": "2.0", "id": "1", "result": {"tools": []}}
+
+    assert discovery._parse_sse_response("") is None
+
+    json_text = '{"test": "value"}'
+    result = discovery._parse_sse_response(json_text)
+    assert result == {"test": "value"}
+
+
+@pytest.mark.asyncio
+async def test_establish_sse_session():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"mcp-session-id": "session-abc-123"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        session_id = await discovery._establish_sse_session(
+            client=client, url="http://example.com/api/mcp", timeout=5.0
+        )
+
+    assert session_id == "session-abc-123"
+
+
+@pytest.mark.asyncio
+async def test_establish_sse_session_timeout():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(10)
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        session_id = await discovery._establish_sse_session(
+            client=client, url="http://example.com/api/mcp", timeout=0.1
+        )
+
+    assert session_id is None
